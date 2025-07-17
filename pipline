@@ -1,0 +1,1498 @@
+#!/bin/bash
+
+# Fixed Unified ASV Pipeline - Complete Analysis from Raw Reads to Species Reports
+# MAJOR BUG FIXES: Directory creation, path resolution, error handling
+# Modes: full, asv-only, taxonomy-only
+
+set -e
+
+# Configuration
+DEFAULT_OUTPUT_DIR="unified_asv_results_$(date +%Y%m%d_%H%M%S)"
+DEFAULT_FORWARD_PRIMER="ACTGGGATTAGATACCCC"
+DEFAULT_REVERSE_PRIMER="TAGAACAGGCTCCTCTAG"
+DEFAULT_THREADS=4
+DEFAULT_ASV_METHOD="dada2"
+DEFAULT_MODE="full"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+echo -e "${BLUE}🧬 Fixed Unified ASV Pipeline - Complete eDNA Analysis${NC}"
+echo "===================================================="
+
+# Function to show usage
+show_usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Fixed unified ASV pipeline supporting multiple input formats and analysis modes
+
+INPUT OPTIONS (choose one):
+    -i, --input DIR               Input directory (flat files or sample folders)
+    -s, --sequences FILE          ASV sequences FASTA (for taxonomy-only mode)
+    -t, --table FILE              ASV abundance table CSV (for taxonomy-only mode)
+
+ANALYSIS MODES:
+    --mode MODE                   Analysis mode: full|asv-only|taxonomy-only (default: full)
+                                 full: Raw reads → ASVs → Taxonomy → Reports
+                                 asv-only: Raw reads → ASVs (stop before taxonomy)
+                                 taxonomy-only: ASVs → Taxonomy → Reports (requires -s and -t)
+
+OPTIONS:
+    -o, --output DIR              Output directory (default: unified_asv_results_YYYYMMDD_HHMMSS)
+    --asv-method METHOD           ASV method: dada2|unoise3|both (default: dada2)
+    --forward-primer SEQ          Forward primer sequence (default: ACTGGGATTAGATACCCC)
+    --reverse-primer SEQ          Reverse primer sequence (default: TAGAACAGGCTCCTCTAG)
+    --threads NUM                 Number of threads (default: 4)
+    --skip-stats                  Skip statistical analysis
+    -h, --help                   Show this help message
+
+INPUT STRUCTURE SUPPORT:
+    Flat files:     raw_data/*.R1.fq.gz, raw_data/*.R2.fq.gz
+    Sample folders: sample_dirs/sample1/sample1*.R1.fq.gz, sample_dirs/sample1/sample1*.R2.fq.gz
+
+EXAMPLES:
+    # Full analysis with flat file structure
+    $0 -i raw_data --mode full
+
+    # Full analysis with sample folders
+    $0 -i ~/Downloads/Sequencing --mode full
+
+    # ASV calling only (skip taxonomy)
+    $0 -i raw_data --mode asv-only --asv-method dada2
+
+    # Taxonomy analysis on existing ASV data
+    $0 -s asv_sequences.fasta -t asv_table.csv --mode taxonomy-only
+
+EOF
+}
+
+# Parse command line arguments
+INPUT_DIR=""
+ASV_SEQUENCES=""
+ASV_TABLE=""
+OUTPUT_DIR=""
+MODE=""
+ASV_METHOD=""
+FORWARD_PRIMER=""
+REVERSE_PRIMER=""
+THREADS=""
+SKIP_STATS=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -i|--input)
+            INPUT_DIR="$2"
+            shift 2
+            ;;
+        -s|--sequences)
+            ASV_SEQUENCES="$2"
+            shift 2
+            ;;
+        -t|--table)
+            ASV_TABLE="$2"
+            shift 2
+            ;;
+        -o|--output)
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --mode)
+            MODE="$2"
+            shift 2
+            ;;
+        --asv-method)
+            ASV_METHOD="$2"
+            shift 2
+            ;;
+        --forward-primer)
+            FORWARD_PRIMER="$2"
+            shift 2
+            ;;
+        --reverse-primer)
+            REVERSE_PRIMER="$2"
+            shift 2
+            ;;
+        --threads)
+            THREADS="$2"
+            shift 2
+            ;;
+        --skip-stats)
+            SKIP_STATS=true
+            shift
+            ;;
+        -h|--help)
+            show_usage
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            show_usage
+            exit 1
+            ;;
+    esac
+done
+
+# Set defaults
+OUTPUT_DIR=${OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR}
+MODE=${MODE:-$DEFAULT_MODE}
+ASV_METHOD=${ASV_METHOD:-$DEFAULT_ASV_METHOD}
+FORWARD_PRIMER=${FORWARD_PRIMER:-$DEFAULT_FORWARD_PRIMER}
+REVERSE_PRIMER=${REVERSE_PRIMER:-$DEFAULT_REVERSE_PRIMER}
+THREADS=${THREADS:-$DEFAULT_THREADS}
+
+# Validate mode and inputs
+case $MODE in
+    "full"|"asv-only")
+        if [[ -z "$INPUT_DIR" ]]; then
+            echo -e "${RED}❌ Error: Input directory (-i) required for mode $MODE${NC}"
+            show_usage
+            exit 1
+        fi
+        ;;
+    "taxonomy-only")
+        if [[ -z "$ASV_SEQUENCES" || -z "$ASV_TABLE" ]]; then
+            echo -e "${RED}❌ Error: ASV sequences (-s) and table (-t) required for taxonomy-only mode${NC}"
+            show_usage
+            exit 1
+        fi
+        ;;
+    *)
+        echo -e "${RED}❌ Error: Invalid mode '$MODE'. Use: full|asv-only|taxonomy-only${NC}"
+        exit 1
+        ;;
+esac
+
+# Convert OUTPUT_DIR to absolute path immediately
+if [[ "$OUTPUT_DIR" != /* ]]; then
+    OUTPUT_DIR="$(pwd)/$OUTPUT_DIR"
+fi
+
+# Display configuration
+echo ""
+echo -e "${CYAN}📋 Configuration:${NC}"
+echo "  Mode: $MODE"
+echo "  Output: $OUTPUT_DIR"
+echo "  ASV method: $ASV_METHOD"
+echo "  Threads: $THREADS"
+
+if [[ "$MODE" != "taxonomy-only" ]]; then
+    echo "  Input directory: $INPUT_DIR"
+    echo "  Forward primer: $FORWARD_PRIMER"
+    echo "  Reverse primer: $REVERSE_PRIMER"
+else
+    echo "  ASV sequences: $ASV_SEQUENCES"
+    echo "  ASV table: $ASV_TABLE"
+fi
+
+echo ""
+
+# CRITICAL FIX: Robust directory creation with verification
+create_output_structure() {
+    echo -e "${BLUE}📁 Creating output directory structure...${NC}"
+    
+    # Create base directory first
+    if ! mkdir -p "$OUTPUT_DIR"; then
+        echo -e "${RED}❌ Failed to create base output directory: $OUTPUT_DIR${NC}"
+        echo "Check permissions on parent directory: $(dirname "$OUTPUT_DIR")"
+        exit 1
+    fi
+    
+    # Verify base directory exists
+    if [[ ! -d "$OUTPUT_DIR" ]]; then
+        echo -e "${RED}❌ Base output directory doesn't exist after creation: $OUTPUT_DIR${NC}"
+        exit 1
+    fi
+    
+    echo "  ✅ Base directory created: $OUTPUT_DIR"
+    
+    # Create all subdirectories
+    local subdirs=("intermediate" "logs" "results" "taxonomy" "scripts" "raw_analysis" "final_reports")
+    
+    for subdir in "${subdirs[@]}"; do
+        local full_path="$OUTPUT_DIR/$subdir"
+        echo "  📁 Creating: $full_path"
+        
+        if ! mkdir -p "$full_path"; then
+            echo -e "${RED}❌ Failed to create: $full_path${NC}"
+            exit 1
+        fi
+        
+        if [[ ! -d "$full_path" ]]; then
+            echo -e "${RED}❌ Directory doesn't exist after creation: $full_path${NC}"
+            exit 1
+        fi
+        
+        echo "    ✅ Created and verified: $subdir"
+    done
+    
+    # Create intermediate subdirectories for full mode
+    if [[ "$MODE" == "full" ]]; then
+        local inter_subdirs=("01_trimmed" "02_merged" "03_primers_removed" "dada2_filtered" "input_files")
+        
+        for subdir in "${inter_subdirs[@]}"; do
+            local full_path="$OUTPUT_DIR/intermediate/$subdir"
+            echo "  📁 Creating intermediate: $full_path"
+            
+            if ! mkdir -p "$full_path"; then
+                echo -e "${RED}❌ Failed to create: $full_path${NC}"
+                exit 1
+            fi
+            
+            if [[ ! -d "$full_path" ]]; then
+                echo -e "${RED}❌ Intermediate directory doesn't exist: $full_path${NC}"
+                exit 1
+            fi
+            
+            echo "    ✅ Created: intermediate/$subdir"
+        done
+    fi
+    
+    echo "  ✅ All directories created and verified"
+    
+    # Initialize log files
+    touch "$OUTPUT_DIR/logs/pipeline.log"
+    if [[ "$MODE" == "full" ]]; then
+        touch "$OUTPUT_DIR/logs/trimmomatic.log"
+        touch "$OUTPUT_DIR/logs/flash.log"
+        touch "$OUTPUT_DIR/logs/cutadapt.log"
+        touch "$OUTPUT_DIR/logs/dada2.log"
+    fi
+    
+    echo "  ✅ Log files initialized"
+}
+
+# Function to check required tools
+check_required_tools() {
+    echo -e "${BLUE}🔧 Checking required tools...${NC}"
+    
+    local missing_tools=()
+    
+    # Check for required tools based on mode
+    if [[ "$MODE" == "full" || "$MODE" == "asv-only" ]]; then
+        # Check trimmomatic
+        if ! command -v trimmomatic &> /dev/null; then
+            missing_tools+=("trimmomatic")
+        else
+            echo "  ✅ trimmomatic"
+        fi
+        
+        for tool in flash cutadapt; do
+            if ! command -v "$tool" &> /dev/null; then
+                missing_tools+=("$tool")
+            else
+                echo "  ✅ $tool"
+            fi
+        done
+    fi
+    
+    # Check R and Rscript
+    if ! command -v Rscript &> /dev/null; then
+        missing_tools+=("Rscript")
+    else
+        echo "  ✅ Rscript"
+    fi
+    
+    # Check BLAST (only needed for taxonomy)
+    if [[ "$MODE" == "full" || "$MODE" == "taxonomy-only" ]]; then
+        if ! command -v blastn &> /dev/null; then
+            missing_tools+=("blastn")
+        else
+            echo "  ✅ blastn"
+        fi
+        
+        if ! command -v makeblastdb &> /dev/null; then
+            missing_tools+=("makeblastdb")
+        else
+            echo "  ✅ makeblastdb"
+        fi
+    fi
+    
+    if [[ ${#missing_tools[@]} -gt 0 ]]; then
+        echo -e "${RED}❌ Missing required tools:${NC}"
+        for tool in "${missing_tools[@]}"; do
+            echo "  - $tool"
+        done
+        echo ""
+        echo -e "${YELLOW}💡 Installation suggestions:${NC}"
+        echo "  conda install -c bioconda trimmomatic flash cutadapt blast"
+        exit 1
+    fi
+    
+    echo "  ✅ All required tools available"
+}
+
+# Function to detect input structure and prepare samples
+detect_and_prepare_samples() {
+    local input_dir="$1"
+    
+    echo -e "${BLUE}🔍 Detecting input structure...${NC}"
+    
+    if [[ ! -d "$input_dir" ]]; then
+        echo -e "${RED}❌ Input directory not found: $input_dir${NC}"
+        exit 1
+    fi
+    
+    SAMPLES=()
+    
+    echo "  📁 Input directory: $input_dir"
+    echo "  📁 Output directory: $OUTPUT_DIR"
+    
+    # Create working directory for organized files
+    local work_dir="$OUTPUT_DIR/intermediate/input_files"
+    echo "  📁 Work directory: $work_dir"
+    
+    # Ensure work directory exists
+    if [[ ! -d "$work_dir" ]]; then
+        echo -e "${RED}❌ Work directory missing - this shouldn't happen${NC}"
+        exit 1
+    fi
+    
+    # Save current directory
+    local original_dir="$(pwd)"
+    
+    # Go to input directory
+    cd "$input_dir" || {
+        echo -e "${RED}❌ Cannot access input directory: $input_dir${NC}"
+        exit 1
+    }
+    
+    echo "  📁 Scanning for sample folders..."
+    
+    local folders_found=false
+    for sample_folder in */; do
+        if [[ -d "$sample_folder" ]]; then
+            folders_found=true
+            sample_name="${sample_folder%/}"
+            echo "    🔍 Checking folder: $sample_name"
+            
+            # Enter sample folder
+            cd "$sample_folder" || {
+                echo "      ❌ Cannot access folder: $sample_folder"
+                cd ..
+                continue
+            }
+            
+            # Find R1 and R2 files
+            r1_files=(*.R1.fq.gz)
+            r2_files=(*.R2.fq.gz)
+            
+            if [[ -f "${r1_files[0]}" && -f "${r2_files[0]}" ]]; then
+                echo "      ✓ Found R1: ${r1_files[0]}"
+                echo "      ✓ Found R2: ${r2_files[0]}"
+                
+                # Copy files with absolute paths
+                r1_source="$(pwd)/${r1_files[0]}"
+                r2_source="$(pwd)/${r2_files[0]}"
+                r1_target="$work_dir/${sample_name}.R1.fq.gz"
+                r2_target="$work_dir/${sample_name}.R2.fq.gz"
+                
+                echo "      📁 Copying to work directory..."
+                if cp "$r1_source" "$r1_target" && cp "$r2_source" "$r2_target"; then
+                    SAMPLES+=("$sample_name")
+                    echo "      ✅ Files organized successfully"
+                else
+                    echo "      ❌ Copy failed"
+                fi
+            else
+                echo "      ⚠️  No R1/R2 pair found"
+            fi
+            
+            cd ..
+        fi
+    done
+    
+    # If no folders found, check for flat file structure
+    if [[ "$folders_found" == false ]]; then
+        echo "  📁 No sample folders found, checking for flat file structure..."
+        
+        for r1_file in *.R1.fq.gz; do
+            if [[ -f "$r1_file" ]]; then
+                sample_name="${r1_file%.R1.fq.gz}"
+                r2_file="${sample_name}.R2.fq.gz"
+                
+                if [[ -f "$r2_file" ]]; then
+                    echo "    ✓ Found flat files: $sample_name"
+                    
+                    # Copy to work directory
+                    r1_source="$(pwd)/$r1_file"
+                    r2_source="$(pwd)/$r2_file"
+                    r1_target="$work_dir/${sample_name}.R1.fq.gz"
+                    r2_target="$work_dir/${sample_name}.R2.fq.gz"
+                    
+                    if cp "$r1_source" "$r1_target" && cp "$r2_source" "$r2_target"; then
+                        SAMPLES+=("$sample_name")
+                        echo "    ✅ Files organized: $sample_name"
+                    else
+                        echo "    ❌ Copy failed for: $sample_name"
+                    fi
+                fi
+            fi
+        done
+    fi
+    
+    # Return to original directory
+    cd "$original_dir"
+    
+    if [[ ${#SAMPLES[@]} -eq 0 ]]; then
+        echo -e "${RED}❌ No valid sample pairs found!${NC}"
+        echo "Expected structure:"
+        echo "  Folders: input_dir/sample1/sample1*.R1.fq.gz + sample1*.R2.fq.gz"
+        echo "  Flat: input_dir/*.R1.fq.gz + *.R2.fq.gz"
+        exit 1
+    fi
+    
+    # Update INPUT_DIR to point to organized files
+    INPUT_DIR="$work_dir"
+    
+    echo -e "${GREEN}✅ Found and organized ${#SAMPLES[@]} samples${NC}"
+    echo "  📁 Files ready in: $INPUT_DIR"
+    echo ""
+}
+
+# Function to create comprehensive R scripts
+create_comprehensive_scripts() {
+    echo -e "${BLUE}📝 Creating comprehensive analysis scripts...${NC}"
+    
+    local scripts_dir="$OUTPUT_DIR/scripts"
+    
+    # Verify scripts directory exists
+    if [[ ! -d "$scripts_dir" ]]; then
+        echo -e "${RED}❌ Scripts directory missing: $scripts_dir${NC}"
+        exit 1
+    fi
+    
+    # Enhanced DADA2 script
+    echo "  📝 Creating enhanced_dada2.R..."
+    cat > "$scripts_dir/enhanced_dada2.R" << 'EOF'
+library(dada2)
+suppressPackageStartupMessages(library(dplyr))
+
+args <- commandArgs(trailingOnly = TRUE)
+input_dir <- args[1]
+output_dir <- args[2]
+threads <- as.numeric(args[3])
+
+cat("🧬 Enhanced DADA2 ASV Analysis\n")
+cat("============================\n")
+
+# Get files
+fnFs <- sort(list.files(input_dir, pattern = "R1.fq.gz", full.names = TRUE))
+fnRs <- sort(list.files(input_dir, pattern = "R2.fq.gz", full.names = TRUE))
+
+if (length(fnFs) == 0 || length(fnRs) == 0) {
+    cat("❌ No R1/R2 files found in:", input_dir, "\n")
+    quit(status = 1)
+}
+
+sample_names <- sapply(fnFs, function(x) gsub("\\.R1\\.fq\\.gz$", "", basename(x)), USE.NAMES = FALSE)
+names(fnFs) <- sample_names
+names(fnRs) <- sample_names
+
+cat("📊 Processing", length(sample_names), "samples:\n")
+for (i in 1:min(5, length(sample_names))) {
+    cat("  ", i, ". ", sample_names[i], "\n", sep = "")
+}
+if (length(sample_names) > 5) cat("  ... and", length(sample_names) - 5, "more\n")
+
+# Quality filtering
+filtered_dir <- file.path(output_dir, "intermediate", "dada2_filtered")
+if (!dir.exists(filtered_dir)) {
+    dir.create(filtered_dir, recursive = TRUE)
+}
+
+filtFs <- file.path(filtered_dir, paste0(sample_names, "_F_filt.fastq.gz"))
+filtRs <- file.path(filtered_dir, paste0(sample_names, "_R_filt.fastq.gz"))
+names(filtFs) <- sample_names
+names(filtRs) <- sample_names
+
+cat("✂️  Filtering sequences (optimized for 12S rRNA)...\n")
+
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs,
+                     maxN = 0, maxEE = c(20, 20), truncQ = 0,
+                     minLen = 80, maxLen = 200, rm.phix = TRUE,
+                     compress = TRUE, multithread = threads > 1)
+
+# Check which samples passed filtering
+exists <- file.exists(filtFs) & file.exists(filtRs) & file.size(filtFs) > 20 & file.size(filtRs) > 20
+filtFs <- filtFs[exists]
+filtRs <- filtRs[exists]
+sample_names <- sample_names[exists]
+
+if (length(filtFs) == 0) {
+    cat("❌ No samples passed filtering!\n")
+    quit(status = 1)
+}
+
+cat("✅", length(filtFs), "samples passed filtering\n")
+
+# Write filtering report
+filter_report_dir <- file.path(output_dir, "raw_analysis")
+if (!dir.exists(filter_report_dir)) {
+    dir.create(filter_report_dir, recursive = TRUE)
+}
+
+filter_report <- data.frame(
+    Sample = rownames(out),
+    Reads_In = out[, 1],
+    Reads_Out = out[, 2],
+    Percent_Retained = round(out[, 2] / out[, 1] * 100, 2)
+)
+write.csv(filter_report, file.path(filter_report_dir, "dada2_filtering_report.csv"), row.names = FALSE)
+
+# Learn error rates
+cat("📚 Learning error rates...\n")
+errF <- learnErrors(filtFs, multithread = threads > 1)
+errR <- learnErrors(filtRs, multithread = threads > 1)
+
+# Dereplicate
+cat("🔄 Dereplicating sequences...\n")
+derepFs <- derepFastq(filtFs, verbose = FALSE)
+derepRs <- derepFastq(filtRs, verbose = FALSE)
+names(derepFs) <- sample_names
+names(derepRs) <- sample_names
+
+# Sample inference
+cat("🧬 Inferring ASVs...\n")
+dadaFs <- dada(derepFs, err = errF, multithread = threads > 1)
+dadaRs <- dada(derepRs, err = errR, multithread = threads > 1)
+
+# Merge paired reads
+cat("🔗 Merging paired reads...\n")
+mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs,
+                     minOverlap = 5, maxMismatch = 2, verbose = FALSE)
+
+# Construct sequence table
+seqtab <- makeSequenceTable(mergers)
+
+# Length filtering for 12S rRNA (typically 100-180bp)
+seq_lengths <- nchar(getSequences(seqtab))
+length_summary <- table(seq_lengths)
+cat("📏 Sequence length distribution:\n")
+print(length_summary)
+
+seqtab_filtered <- seqtab[, seq_lengths >= 100 & seq_lengths <= 180]
+cat("📊 Sequences after length filtering:", ncol(seqtab_filtered), "\n")
+
+# Remove chimeras
+cat("🧹 Removing chimeras...\n")
+seqtab_nochim <- removeBimeraDenovo(seqtab_filtered, method = "consensus", multithread = threads > 1)
+
+# Summary statistics
+reads_summary <- data.frame(
+    Sample = rownames(seqtab_nochim),
+    ASVs = rowSums(seqtab_nochim > 0),
+    Total_Reads = rowSums(seqtab_nochim)
+)
+
+cat("📊 Final summary:\n")
+cat("  Total ASVs:", ncol(seqtab_nochim), "\n")
+cat("  Total reads after processing:", sum(seqtab_nochim), "\n")
+cat("  Average ASVs per sample:", round(mean(reads_summary$ASVs), 1), "\n")
+
+# Save results
+write.csv(seqtab_nochim, file.path(output_dir, "intermediate", "asv_table_dada2.csv"))
+
+# Create FASTA file with proper headers
+asv_seqs <- colnames(seqtab_nochim)
+asv_headers <- paste0("ASV_", seq_along(asv_seqs))
+asv_fasta <- file.path(output_dir, "intermediate", "asv_sequences_dada2.fasta")
+
+cat(paste0(">", asv_headers, "\n", asv_seqs), file = asv_fasta, sep = "\n")
+
+# Rename columns in table
+colnames(seqtab_nochim) <- asv_headers
+write.csv(seqtab_nochim, file.path(output_dir, "intermediate", "asv_table_dada2_renamed.csv"))
+
+# Save detailed report
+write.csv(reads_summary, file.path(filter_report_dir, "dada2_summary_stats.csv"), row.names = FALSE)
+
+cat("✅ DADA2 analysis completed successfully!\n")
+EOF
+
+    # FIXED Comprehensive taxonomy analysis script using CSV files
+    echo "  📝 Creating comprehensive_taxonomy.R (FIXED VERSION)..."
+    cat > "$scripts_dir/comprehensive_taxonomy.R" << 'EOF'
+suppressPackageStartupMessages({
+    library(dplyr)
+    library(tidyr)
+    library(stringr)
+    library(vegan)
+})
+
+args <- commandArgs(trailingOnly = TRUE)
+if (length(args) < 3) {
+    cat("Usage: Rscript comprehensive_taxonomy.R <blast_file> <asv_table> <output_dir> [database_type]\n")
+    quit(status = 1)
+}
+
+blast_file <- args[1]
+asv_table_file <- args[2]
+output_dir <- args[3]
+database_type <- if (length(args) >= 4) args[4] else "Auto-detected"
+
+cat("🧬 CSV-Based Comprehensive ASV Taxonomy Analysis\n")
+cat("===============================================\n")
+cat("BLAST file:", blast_file, "\n")
+cat("ASV table:", asv_table_file, "\n")
+cat("Output directory:", output_dir, "\n")
+cat("Database:", database_type, "\n\n")
+
+# Read BLAST results
+blast_data <- read.table(blast_file, sep = "\t", header = FALSE, 
+                        stringsAsFactors = FALSE, fill = TRUE, quote = "")
+
+colnames(blast_data) <- c("ASV_ID", "Subject_ID", "Percent_Identity", "Length", 
+                         "Mismatches", "Gap_Opens", "Q_Start", "Q_End", 
+                         "S_Start", "S_End", "E_value", "Bit_Score", "Subject_Title")
+
+# Paths to CSV taxonomy files
+taxonomy_dir <- "/home/jeff/Desktop/MY_scripts/Database/reference_database_creator/Midori2/NNN/simple_db_prep"
+midori_csv <- file.path(taxonomy_dir, "midori_taxonomy.csv")
+ncbi_csv <- file.path(taxonomy_dir, "ncbi_taxonomy.csv")
+
+# Read appropriate taxonomy CSV file
+taxonomy_data <- data.frame()
+
+if (database_type == "MIDORI2" && file.exists(midori_csv)) {
+    cat("📚 Using MIDORI taxonomy CSV:", midori_csv, "\n")
+    taxonomy_data <- read.csv(midori_csv, stringsAsFactors = FALSE)
+    cat("  Loaded", nrow(taxonomy_data), "taxonomy entries from MIDORI CSV\n")
+} else if (file.exists(ncbi_csv)) {
+    cat("📚 Using NCBI taxonomy CSV:", ncbi_csv, "\n")
+    taxonomy_data <- read.csv(ncbi_csv, stringsAsFactors = FALSE)
+    cat("  Loaded", nrow(taxonomy_data), "taxonomy entries from NCBI CSV\n")
+} else {
+    cat("❌ No taxonomy CSV files found!\n")
+    quit(status = 1)
+}
+
+# Function to clean accession numbers
+clean_accession_comprehensive <- function(accessions) {
+    sapply(accessions, function(acc) {
+        # Remove prefixes like gb|, emb|, ref|, etc.
+        cleaned <- gsub("^(gb\\||emb\\||ref\\||dbj\\||pir\\||prf\\||pdb\\||pat\\||bbs\\||gnl\\|)", "", acc)
+        
+        # Remove anything after the second pipe (for formats like gb|acc|species)
+        if (grepl("\\|", cleaned)) {
+            parts <- strsplit(cleaned, "\\|")[[1]]
+            cleaned <- parts[1]  # Take first part only
+        }
+        
+        # Remove version numbers (.1, .2, etc.)
+        cleaned <- gsub("\\.\\d+$", "", cleaned)
+        
+        # Handle range formats (remove everything after first dot if it looks like a range)
+        if (grepl("\\.", cleaned)) {
+            parts <- strsplit(cleaned, "\\.")[[1]]
+            # Only keep the first part if the second part looks like a range
+            if (length(parts) > 1) {
+                if (grepl("^\\d+$", parts[2]) || grepl("^<.*>$", parts[2])) {
+                    cleaned <- parts[1]
+                }
+            }
+        }
+        
+        # Remove any remaining special characters
+        cleaned <- gsub("[<>]", "", cleaned)
+        cleaned <- str_trim(cleaned)
+        
+        return(cleaned)
+    }, USE.NAMES = FALSE)
+}
+
+# Clean accessions
+cat("🔧 Cleaning accessions for matching...\n")
+blast_data$Clean_Accession <- clean_accession_comprehensive(blast_data$Subject_ID)
+taxonomy_data$Clean_Accession <- clean_accession_comprehensive(taxonomy_data$Accession)
+
+# Check for overlaps
+blast_accessions <- unique(blast_data$Clean_Accession)
+csv_accessions <- unique(taxonomy_data$Clean_Accession)
+common_accessions <- intersect(blast_accessions, csv_accessions)
+
+cat("📊 Accession matching:\n")
+cat("  BLAST accessions:", length(blast_accessions), "\n")
+cat("  CSV accessions:", length(csv_accessions), "\n")
+cat("  Common accessions:", length(common_accessions), "\n")
+
+# Merge BLAST with taxonomy
+if (length(common_accessions) > 0) {
+    blast_with_taxonomy <- merge(
+        blast_data, 
+        taxonomy_data[, c("Clean_Accession", "Species", "Genus", "Database")], 
+        by = "Clean_Accession",
+        all.x = TRUE
+    )
+    
+    # Fill missing values
+    blast_with_taxonomy$Species[is.na(blast_with_taxonomy$Species)] <- "Unclassified"
+    blast_with_taxonomy$Genus[is.na(blast_with_taxonomy$Genus)] <- "Unclassified"
+    blast_with_taxonomy$Database[is.na(blast_with_taxonomy$Database)] <- "Unknown"
+    
+    cat("✅ Successfully merged", sum(blast_with_taxonomy$Species != "Unclassified"), "hits with taxonomy\n")
+} else {
+    cat("⚠️ No accession matches found - using fallback species extraction\n")
+    # Fallback: extract species from BLAST Subject_ID
+    blast_data$Species <- sapply(blast_data$Subject_ID, function(id) {
+        if (grepl("\\|", id)) {
+            parts <- strsplit(id, "\\|")[[1]]
+            if (length(parts) >= 3) {
+                species <- parts[3]
+                species <- gsub("_", " ", species)
+                return(species)
+            }
+        }
+        return("Unclassified")
+    })
+    
+    blast_data$Genus <- sapply(blast_data$Species, function(sp) {
+        if (sp != "Unclassified" && grepl(" ", sp)) {
+            return(strsplit(sp, " ")[[1]][1])
+        }
+        return("Unclassified")
+    })
+    
+    blast_with_taxonomy <- blast_data
+    blast_with_taxonomy$Database <- "BLAST_header"
+}
+
+# Enhanced organism classification
+classify_organism_detailed <- function(species, genus) {
+    if (species == "Unclassified" || genus == "Unclassified") {
+        return(list(type = "Unclassified", habitat = "Unknown", group = "Unknown"))
+    }
+    
+    # Marine fish genera (expanded with species from your results)
+    marine_fish_genera <- c(
+        "Pristipomoides", "Mugil", "Planiliza", "Konosirus", "Nemipterus", 
+        "Tridentiger", "Gadus", "Thunnus", "Scomber", "Auxis", "Lampadena", 
+        "Sillago", "Pterocaesio", "Chromis", "Liza", "Acanthurus", "Lutjanus",
+        "Epinephelus", "Serranus", "Diplodus", "Sparus", "Mullus", "Solea",
+        "Stomatepia", "Sarotherodon", "Coptodon", "Oreochromis"
+    )
+    
+    # Freshwater fish genera
+    freshwater_fish_genera <- c(
+        "Salmo", "Oncorhynchus", "Perca", "Esox", "Rutilus", "Cyprinus"
+    )
+    
+    # Birds
+    bird_genera <- c("Phalacrocorax", "Ardea", "Egretta", "Anas", "Aythya", "Larus")
+    
+    # Mammals
+    mammal_genera <- c("Homo", "Pan", "Mandrillus", "Sus", "Otocolobus", "Ochotona")
+    
+    # Classify
+    if (genus %in% marine_fish_genera) {
+        return(list(type = "Fish", habitat = "Marine", group = "Ray-finned_Fish"))
+    } else if (genus %in% freshwater_fish_genera) {
+        return(list(type = "Fish", habitat = "Freshwater", group = "Ray-finned_Fish"))
+    } else if (genus %in% bird_genera) {
+        return(list(type = "Vertebrate", habitat = "Terrestrial", group = "Bird"))
+    } else if (genus %in% mammal_genera) {
+        return(list(type = "Vertebrate", habitat = "Terrestrial", group = "Mammal"))
+    } else {
+        return(list(type = "Other_Eukaryote", habitat = "Unknown", group = "Unclassified"))
+    }
+}
+
+# Add organism classification
+cat("🔬 Classifying organisms...\n")
+classification_results <- lapply(1:nrow(blast_with_taxonomy), function(i) {
+    classify_organism_detailed(blast_with_taxonomy$Species[i], blast_with_taxonomy$Genus[i])
+})
+
+blast_with_taxonomy$Organism_Type <- sapply(classification_results, function(x) x$type)
+blast_with_taxonomy$Habitat_Type <- sapply(classification_results, function(x) x$habitat)
+blast_with_taxonomy$Taxonomic_Group <- sapply(classification_results, function(x) x$group)
+
+# Get best hit per ASV
+best_hits <- blast_with_taxonomy %>%
+    group_by(ASV_ID) %>%
+    arrange(desc(Percent_Identity), desc(Bit_Score)) %>%
+    slice(1) %>%
+    ungroup()
+
+# Add confidence levels
+best_hits <- best_hits %>%
+    mutate(
+        Identity_Confidence = case_when(
+            Percent_Identity >= 97 ~ "High",
+            Percent_Identity >= 90 ~ "Medium",
+            Percent_Identity >= 80 ~ "Low",
+            TRUE ~ "Very_Low"
+        ),
+        Overall_Confidence = case_when(
+            Percent_Identity >= 97 & Species != "Unclassified" ~ "High",
+            Percent_Identity >= 90 & Species != "Unclassified" ~ "Medium",
+            TRUE ~ "Low"
+        ),
+        Database_Source = database_type,
+        Family = "Unknown"  # Can be enhanced later
+    )
+
+# Ensure output directory exists
+if (!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE)
+}
+
+# Write ASV taxonomy assignments
+write.csv(best_hits, file.path(output_dir, "ASV_taxonomy_assignments.csv"), row.names = FALSE)
+
+cat("📊 Taxonomy assignment summary:\n")
+cat("  Total ASVs with hits:", nrow(best_hits), "\n")
+cat("  Species identified:", sum(best_hits$Species != "Unclassified"), "\n")
+cat("  High confidence (≥97% + good extraction):", sum(best_hits$Overall_Confidence == "High"), "\n")
+cat("  Fish species:", sum(best_hits$Organism_Type == "Fish"), "\n")
+cat("  Marine organisms:", sum(best_hits$Habitat_Type == "Marine"), "\n")
+
+# Process abundance data with robust ASV matching
+cat("\n📊 Processing abundance data...\n")
+
+if (!file.exists(asv_table_file)) {
+    cat("❌ ASV table file not found:", asv_table_file, "\n")
+    quit(status = 1)
+}
+
+asv_table_raw <- read.csv(asv_table_file, row.names = 1, check.names = FALSE)
+cat("  Raw ASV table dimensions:", nrow(asv_table_raw), "x", ncol(asv_table_raw), "\n")
+
+# Auto-detect table orientation and transpose if needed
+sample_like_rownames <- any(grepl("eDNA|EV\\.DNA|sample", rownames(asv_table_raw), ignore.case = TRUE))
+asv_like_colnames <- any(grepl("ASV|asv", colnames(asv_table_raw), ignore.case = TRUE))
+
+if (sample_like_rownames && asv_like_colnames) {
+    cat("  🔄 Transposing table (samples in rows → ASVs in rows)...\n")
+    asv_table <- t(asv_table_raw)
+} else {
+    asv_table <- asv_table_raw
+}
+
+cat("  Final ASV table dimensions:", nrow(asv_table), "x", ncol(asv_table), "\n")
+
+# Enhanced sample metadata extraction
+extract_sample_metadata <- function(sample_id) {
+    method <- "Unknown"
+    location <- "Unknown"
+    
+    sample_lower <- tolower(sample_id)
+    
+    # Method detection
+    if (grepl("edna|e_dna|e\\.dna", sample_lower)) {
+        method <- "eDNA"
+    } else if (grepl("ev.*dna|evdna|ev_dna|ev\\.dna", sample_lower)) {
+        method <- "EV.DNA"
+    }
+    
+    # Location extraction
+    location_match <- str_extract(sample_id, "\\d+(?:\\.\\d+)?")
+    if (!is.na(location_match)) {
+        location <- location_match
+    }
+    
+    return(list(Method = method, Location = location))
+}
+
+# Convert to long format and add metadata
+asv_long <- data.frame(
+    ASV_ID = rep(rownames(asv_table), ncol(asv_table)),
+    Sample_ID = rep(colnames(asv_table), each = nrow(asv_table)),
+    Abundance = as.vector(as.matrix(asv_table)),
+    stringsAsFactors = FALSE
+)
+
+asv_long <- asv_long[asv_long$Abundance > 0, ]
+
+sample_metadata <- lapply(asv_long$Sample_ID, extract_sample_metadata)
+asv_long$Method <- sapply(sample_metadata, function(x) x$Method)
+asv_long$Location <- sapply(sample_metadata, function(x) x$Location)
+
+cat("  Non-zero abundance records:", nrow(asv_long), "\n")
+
+# Merge with taxonomy
+abundance_with_taxonomy <- merge(
+    asv_long, 
+    best_hits[, c("ASV_ID", "Species", "Genus", "Family", "Organism_Type", "Habitat_Type", 
+                  "Taxonomic_Group", "Identity_Confidence", "Overall_Confidence", 
+                  "Database_Source", "Percent_Identity", "E_value")], 
+    by = "ASV_ID",
+    all.x = FALSE
+)
+
+cat("  Records with taxonomy:", nrow(abundance_with_taxonomy), "\n")
+
+if (nrow(abundance_with_taxonomy) > 0) {
+    # Create comprehensive reports
+    cat("📊 Creating comprehensive reports...\n")
+    
+    # 1. Sample-by-sample detailed report
+    sample_taxonomy <- abundance_with_taxonomy %>%
+        arrange(Sample_ID, desc(Abundance)) %>%
+        select(Sample_ID, Method, Location, ASV_ID, Species, Genus, Family,
+               Organism_Type, Habitat_Type, Taxonomic_Group, Abundance, 
+               Identity_Confidence, Overall_Confidence, Percent_Identity)
+    
+    write.csv(sample_taxonomy, file.path(output_dir, "sample_by_sample_taxonomy.csv"), row.names = FALSE)
+    
+    # 2. Species abundance summary
+    species_summary <- abundance_with_taxonomy %>%
+        group_by(Species, Genus, Family, Organism_Type, Habitat_Type, Taxonomic_Group) %>%
+        summarise(
+            Total_Reads = sum(Abundance),
+            Samples_Present = n_distinct(Sample_ID),
+            ASVs = n_distinct(ASV_ID),
+            Methods_Detected = paste(unique(Method), collapse = ", "),
+            Avg_Identity = round(mean(Percent_Identity), 2),
+            Max_Identity = round(max(Percent_Identity), 2),
+            .groups = 'drop'
+        ) %>%
+        arrange(desc(Total_Reads))
+    
+    write.csv(species_summary, file.path(output_dir, "species_abundance_summary.csv"), row.names = FALSE)
+    
+    # 3. Method comparison (if multiple methods exist)
+    available_methods <- unique(abundance_with_taxonomy$Method[abundance_with_taxonomy$Method != "Unknown"])
+    
+    if (length(available_methods) >= 2) {
+        method_comparison <- abundance_with_taxonomy %>%
+            group_by(Species, Genus, Organism_Type, Habitat_Type, Method) %>%
+            summarise(Total_Reads = sum(Abundance), .groups = 'drop') %>%
+            pivot_wider(names_from = Method, values_from = Total_Reads, values_fill = 0)
+        
+        method_cols <- intersect(colnames(method_comparison), available_methods)
+        if (length(method_cols) >= 2) {
+            if ("eDNA" %in% method_cols && "EV.DNA" %in% method_cols) {
+                method_comparison <- method_comparison %>%
+                    mutate(
+                        Total_Reads = `eDNA` + `EV.DNA`,
+                        Log2_Ratio = round(log2((`eDNA` + 1) / (`EV.DNA` + 1)), 2),
+                        Detection_Pattern = case_when(
+                            `eDNA` > 0 & `EV.DNA` == 0 ~ "eDNA_only",
+                            `eDNA` == 0 & `EV.DNA` > 0 ~ "EV.DNA_only",
+                            TRUE ~ "Both_methods"
+                        ),
+                        Method_Preference = ifelse(`eDNA` > `EV.DNA`, "eDNA", "EV.DNA")
+                    ) %>%
+                    arrange(desc(Total_Reads))
+            }
+        }
+        
+        write.csv(method_comparison, file.path(output_dir, "method_species_comparison.csv"), row.names = FALSE)
+    }
+    
+    # 4. Ecological summary by habitat/group
+    ecological_summary <- abundance_with_taxonomy %>%
+        group_by(Organism_Type, Habitat_Type, Taxonomic_Group, Method) %>%
+        summarise(
+            Species_Count = n_distinct(Species[Species != "Unclassified"]),
+            Total_Reads = sum(Abundance),
+            ASV_Count = n_distinct(ASV_ID),
+            .groups = 'drop'
+        ) %>%
+        arrange(desc(Total_Reads))
+    
+    write.csv(ecological_summary, file.path(output_dir, "ecological_summary.csv"), row.names = FALSE)
+    
+    # 5. Confidence assessment report
+    confidence_report <- best_hits %>%
+        group_by(Overall_Confidence, Identity_Confidence, Organism_Type) %>%
+        summarise(
+            ASV_Count = n(),
+            Avg_Identity = round(mean(Percent_Identity), 2),
+            Species_Count = n_distinct(Species[Species != "Unclassified"]),
+            .groups = 'drop'
+        ) %>%
+        arrange(desc(ASV_Count))
+    
+    write.csv(confidence_report, file.path(output_dir, "taxonomy_confidence_report.csv"), row.names = FALSE)
+    
+    cat("✅ Comprehensive taxonomy analysis completed!\n")
+    cat("\nFiles created:\n")
+    cat("  📊 ASV_taxonomy_assignments.csv - Complete taxonomy for each ASV\n")
+    cat("  📊 sample_by_sample_taxonomy.csv - Detailed sample breakdown\n")
+    cat("  📊 species_abundance_summary.csv - Species-level abundance data\n")
+    cat("  📊 method_species_comparison.csv - eDNA vs EV.DNA comparison\n")
+    cat("  📊 ecological_summary.csv - Ecological groups summary\n")
+    cat("  📊 taxonomy_confidence_report.csv - Quality assessment\n")
+    
+} else {
+    cat("⚠️  No abundance data could be matched with taxonomy\n")
+    cat("  ASV IDs in table vs BLAST results may not match\n")
+}
+EOF
+
+    echo "  ✅ All R scripts created successfully"
+}
+
+# Function to auto-detect databases AND taxonomy CSV files
+detect_databases() {
+    echo -e "${BLUE}🔍 Auto-detecting taxonomy databases and CSV files...${NC}"
+    
+    DATABASE_FOUND=false
+    DATABASE_PATH=""
+    DATABASE_TYPE=""
+    
+    # Check for CSV taxonomy files first (most important)
+    TAXONOMY_CSV_DIR="/home/jeff/Desktop/MY_scripts/Database/reference_database_creator/Midori2/NNN/simple_db_prep"
+    MIDORI_CSV="$TAXONOMY_CSV_DIR/midori_taxonomy.csv"
+    NCBI_CSV="$TAXONOMY_CSV_DIR/ncbi_taxonomy.csv"
+    
+    echo "  🔍 Checking for taxonomy CSV files..."
+    if [[ -f "$MIDORI_CSV" ]]; then
+        midori_entries=$(wc -l < "$MIDORI_CSV")
+        echo -e "  ${GREEN}✓ MIDORI CSV found: $midori_entries entries${NC}"
+    else
+        echo -e "  ${YELLOW}⚠️  MIDORI CSV not found: $MIDORI_CSV${NC}"
+    fi
+    
+    if [[ -f "$NCBI_CSV" ]]; then
+        ncbi_entries=$(wc -l < "$NCBI_CSV")
+        echo -e "  ${GREEN}✓ NCBI CSV found: $ncbi_entries entries${NC}"
+    else
+        echo -e "  ${YELLOW}⚠️  NCBI CSV not found: $NCBI_CSV${NC}"
+    fi
+    
+    # Common database locations
+    for base_path in "$HOME/databases" "$HOME/Desktop/databases" "$HOME/Desktop/MY_scripts/Database" "./databases" "$HOME/Downloads"; do
+        if [[ -d "$base_path" ]]; then
+            # Look for MIDORI
+            for db_path in "$base_path/midori2" "$base_path/Midori2" "$base_path/reference_database_creator/Midori2" "$base_path/midori_12s"; do
+                if [[ -f "$db_path/amplicons_blast.fasta" ]]; then
+                    DATABASE_PATH="$db_path/amplicons_blast"
+                    DATABASE_TYPE="MIDORI2"
+                    DATABASE_FOUND=true
+                    break 2
+                elif [[ -f "$db_path/amplicons_extracted/amplicons_blast.fasta" ]]; then
+                    DATABASE_PATH="$db_path/amplicons_extracted/amplicons_blast"
+                    DATABASE_TYPE="MIDORI2"
+                    DATABASE_FOUND=true
+                    break 2
+                fi
+            done
+            
+            # Look for NCBI
+            if [[ ! "$DATABASE_FOUND" == true ]]; then
+                for db_path in "$base_path/ncbi_12s" "$base_path/NCBI" "$base_path/ncbi"; do
+                    if [[ -f "$db_path/12s_database.fasta" ]]; then
+                        DATABASE_PATH="$db_path/12s_database"
+                        DATABASE_TYPE="NCBI_12S"
+                        DATABASE_FOUND=true
+                        break 2
+                    fi
+                done
+            fi
+        fi
+    done
+    
+    if [[ "$DATABASE_FOUND" == true ]]; then
+        echo -e "  ${GREEN}✓ Found BLAST database: $DATABASE_TYPE${NC}"
+        echo "    Path: $DATABASE_PATH"
+        
+        # Verify database file exists
+        if [[ ! -f "${DATABASE_PATH}.fasta" ]]; then
+            echo -e "  ${RED}❌ Database FASTA file missing: ${DATABASE_PATH}.fasta${NC}"
+            DATABASE_FOUND=false
+        fi
+    else
+        echo -e "  ${YELLOW}⚠️  No BLAST databases found${NC}"
+    fi
+    
+    # Summary
+    if [[ "$DATABASE_FOUND" == true ]] && [[ -f "$MIDORI_CSV" || -f "$NCBI_CSV" ]]; then
+        echo -e "  ${GREEN}✅ Ready for full taxonomy analysis with CSV files!${NC}"
+    elif [[ "$DATABASE_FOUND" == true ]]; then
+        echo -e "  ${YELLOW}⚠️  BLAST database found but no CSV files - limited taxonomy${NC}"
+    else
+        echo -e "  ${RED}❌ No databases found - taxonomy analysis not possible${NC}"
+    fi
+    
+    return 0
+}
+
+# CRITICAL FIX: Ensure taxonomy directory exists before BLAST
+ensure_taxonomy_directory() {
+    local taxonomy_dir="$OUTPUT_DIR/taxonomy"
+    
+    echo "🔧 Ensuring taxonomy directory exists..."
+    echo "  📁 Checking: $taxonomy_dir"
+    
+    if [[ ! -d "$taxonomy_dir" ]]; then
+        echo "  📁 Creating taxonomy directory..."
+        if ! mkdir -p "$taxonomy_dir"; then
+            echo -e "${RED}❌ Failed to create taxonomy directory: $taxonomy_dir${NC}"
+            exit 1
+        fi
+    fi
+    
+    if [[ ! -d "$taxonomy_dir" ]]; then
+        echo -e "${RED}❌ Taxonomy directory still doesn't exist: $taxonomy_dir${NC}"
+        exit 1
+    fi
+    
+    echo "  ✅ Taxonomy directory verified: $taxonomy_dir"
+}
+
+# Main pipeline execution starts here
+echo ""
+
+# Create output structure first
+create_output_structure
+
+# Check required tools
+check_required_tools
+
+case $MODE in
+    "full")
+        # Detect input structure and prepare samples
+        detect_and_prepare_samples "$INPUT_DIR"
+        
+        # Create scripts
+        create_comprehensive_scripts
+        
+        # Step 1: Quality filtering and preprocessing
+        echo -e "${BLUE}📝 Step 1: Quality filtering and preprocessing...${NC}"
+        
+        for sample in "${SAMPLES[@]}"; do
+            echo "  Processing: $sample"
+            
+            # Use organized files from work directory
+            r1_file="$INPUT_DIR/${sample}.R1.fq.gz"
+            r2_file="$INPUT_DIR/${sample}.R2.fq.gz"
+            
+            if [[ ! -f "$r1_file" ]]; then
+                echo "    ❌ R1 file not found: $r1_file"
+                continue
+            fi
+            if [[ ! -f "$r2_file" ]]; then
+                echo "    ❌ R2 file not found: $r2_file"
+                continue
+            fi
+            
+            echo "    ✅ Input files verified"
+            echo "    🔧 Running Trimmomatic..."
+            
+            # Trimmomatic
+            trimmomatic PE -threads $THREADS \
+                "$r1_file" \
+                "$r2_file" \
+                "$OUTPUT_DIR/intermediate/01_trimmed/${sample}_R1_paired.fq.gz" \
+                "$OUTPUT_DIR/intermediate/01_trimmed/${sample}_R1_unpaired.fq.gz" \
+                "$OUTPUT_DIR/intermediate/01_trimmed/${sample}_R2_paired.fq.gz" \
+                "$OUTPUT_DIR/intermediate/01_trimmed/${sample}_R2_unpaired.fq.gz" \
+                CROP:300 SLIDINGWINDOW:50:20 MINLEN:50 \
+                2>> "$OUTPUT_DIR/logs/trimmomatic.log" || {
+                echo "    ❌ Trimmomatic failed for $sample"
+                continue
+            }
+            
+            echo "    ✅ Trimmomatic completed"
+            echo "    🔧 Running FLASH..."
+            
+            # Flash
+            flash "$OUTPUT_DIR/intermediate/01_trimmed/${sample}_R1_paired.fq.gz" \
+                  "$OUTPUT_DIR/intermediate/01_trimmed/${sample}_R2_paired.fq.gz" \
+                  -o "$sample" -d "$OUTPUT_DIR/intermediate/02_merged" \
+                  -m 10 -z 2>> "$OUTPUT_DIR/logs/flash.log" || {
+                echo "    ❌ FLASH failed for $sample"
+                continue
+            }
+            
+            echo "    ✅ FLASH completed"
+            echo "    🔧 Running Cutadapt..."
+            
+            # Cutadapt
+            REV_PRIMER_RC=$(echo $REVERSE_PRIMER | tr 'ATGC' 'TACG' | rev)
+            cutadapt -g "$FORWARD_PRIMER" -a "$REV_PRIMER_RC" \
+                     --minimum-length 50 --maximum-length 500 \
+                     -o "$OUTPUT_DIR/intermediate/03_primers_removed/${sample}_clean.fq.gz" \
+                     "$OUTPUT_DIR/intermediate/02_merged/${sample}.extendedFrags.fastq.gz" \
+                     >> "$OUTPUT_DIR/logs/cutadapt.log" 2>&1 || {
+                echo "    ❌ Cutadapt failed for $sample"
+                continue
+            }
+            
+            echo "    ✅ All preprocessing completed for $sample"
+        done
+        
+        # Step 2: ASV calling
+        echo ""
+        echo -e "${BLUE}📝 Step 2: ASV calling with $ASV_METHOD...${NC}"
+        
+        case $ASV_METHOD in
+            "dada2")
+                echo "🧬 Running DADA2 ASV analysis..."
+                if Rscript "$OUTPUT_DIR/scripts/enhanced_dada2.R" "$INPUT_DIR" "$OUTPUT_DIR" "$THREADS" 2>&1 | tee "$OUTPUT_DIR/logs/dada2.log"; then
+                    if [[ -f "$OUTPUT_DIR/intermediate/asv_sequences_dada2.fasta" ]]; then
+                        echo "  ✅ DADA2 completed successfully"
+                        ASV_METHODS_USED=("dada2")
+                    else
+                        echo "  ❌ DADA2 failed - no ASV sequences generated"
+                        exit 1
+                    fi
+                else
+                    echo "  ❌ DADA2 failed during execution"
+                    exit 1
+                fi
+                ;;
+            "unoise3")
+                echo "UNOISE3 implementation needed"
+                ASV_METHODS_USED=("unoise3")
+                ;;
+            "both")
+                echo "🧬 Running DADA2 ASV analysis..."
+                if Rscript "$OUTPUT_DIR/scripts/enhanced_dada2.R" "$INPUT_DIR" "$OUTPUT_DIR" "$THREADS" 2>&1 | tee "$OUTPUT_DIR/logs/dada2.log"; then
+                    if [[ -f "$OUTPUT_DIR/intermediate/asv_sequences_dada2.fasta" ]]; then
+                        echo "  ✅ DADA2 completed successfully"
+                        ASV_METHODS_USED=("dada2")
+                    else
+                        echo "  ❌ DADA2 failed - no ASV sequences generated"
+                        ASV_METHODS_USED=()
+                    fi
+                else
+                    echo "  ❌ DADA2 failed during execution"
+                    ASV_METHODS_USED=()
+                fi
+                ;;
+        esac
+        
+        # Step 3: Taxonomy assignment
+        echo ""
+        echo -e "${BLUE}📝 Step 3: Taxonomy assignment...${NC}"
+        
+        # Check if we have any successful ASV methods
+        if [[ ${#ASV_METHODS_USED[@]} -eq 0 ]]; then
+            echo -e "${RED}❌ No ASV methods completed successfully - skipping taxonomy${NC}"
+        else
+            detect_databases
+            
+            if [[ "$DATABASE_FOUND" == true ]]; then
+                # CRITICAL FIX: Ensure taxonomy directory exists
+                ensure_taxonomy_directory
+                
+                for method in "${ASV_METHODS_USED[@]}"; do
+                    asv_file="$OUTPUT_DIR/intermediate/asv_sequences_${method}.fasta"
+                    
+                    if [[ -f "$asv_file" ]]; then
+                        echo "🧬 Processing $method ASVs for taxonomy..."
+                        
+                        # Create BLAST database if needed
+                        if [[ ! -f "${DATABASE_PATH}.nhr" ]]; then
+                            echo "  📋 Creating BLAST database..."
+                            makeblastdb -in "${DATABASE_PATH}.fasta" -dbtype nucl -out "$DATABASE_PATH" -parse_seqids
+                        fi
+                        
+                        # Verify taxonomy directory exists before BLAST
+                        if [[ ! -d "$OUTPUT_DIR/taxonomy" ]]; then
+                            echo -e "${RED}❌ Taxonomy directory missing before BLAST${NC}"
+                            exit 1
+                        fi
+                        
+                        # Run BLAST with optimized parameters (learned from troubleshooting)
+                        blast_output="$OUTPUT_DIR/taxonomy/${method}_blast_results.txt"
+                        echo "  🔍 Running BLAST with optimized parameters..."
+                        echo "  📁 BLAST output: $blast_output"
+                        
+                        # Use relaxed parameters that work well for 12S sequences
+                        blastn -query "$asv_file" \
+                               -db "$DATABASE_PATH" \
+                               -out "$blast_output" \
+                               -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore stitle" \
+                               -max_target_seqs 10 \
+                               -perc_identity 70.0 \
+                               -qcov_hsp_perc 50.0 \
+                               -num_threads $THREADS
+                        
+                        # Verify BLAST output was created
+                        if [[ -f "$blast_output" && -s "$blast_output" ]]; then
+                            echo "  ✅ BLAST completed successfully"
+                            
+                            # Run comprehensive taxonomy analysis
+                            echo "  📋 Running comprehensive taxonomy analysis..."
+                            if Rscript "$OUTPUT_DIR/scripts/comprehensive_taxonomy.R" \
+                                    "$blast_output" \
+                                    "$OUTPUT_DIR/intermediate/asv_table_${method}_renamed.csv" \
+                                    "$OUTPUT_DIR/final_reports" \
+                                    "$DATABASE_TYPE"; then
+                                echo "  ✅ Taxonomy analysis completed for $method"
+                            else
+                                echo "  ❌ Taxonomy analysis failed for $method"
+                            fi
+                        else
+                            echo "  ❌ BLAST failed - no output file created or file is empty"
+                        fi
+                    fi
+                done
+            else
+                echo -e "${YELLOW}⚠️  No databases found - skipping taxonomy assignment${NC}"
+                echo "  💡 You can run taxonomy analysis later with:"
+                echo "      $0 -s asv_sequences.fasta -t asv_table.csv --mode taxonomy-only"
+            fi
+        fi
+        ;;
+    
+    "asv-only")
+        echo "ASV-only mode not fully implemented yet"
+        ;;
+    
+    "taxonomy-only")
+        # Run only taxonomy analysis on provided ASV data
+        echo -e "${BLUE}📝 Taxonomy-only mode: Processing existing ASV data...${NC}"
+        
+        create_comprehensive_scripts
+        detect_databases
+        
+        if [[ "$DATABASE_FOUND" == true ]]; then
+            # CRITICAL FIX: Ensure taxonomy directory exists
+            ensure_taxonomy_directory
+            
+            # Create BLAST database if needed
+            if [[ ! -f "${DATABASE_PATH}.nhr" ]]; then
+                echo "  📋 Creating BLAST database..."
+                makeblastdb -in "${DATABASE_PATH}.fasta" -dbtype nucl -out "$DATABASE_PATH" -parse_seqids
+            fi
+            
+            # Run BLAST with optimized parameters
+            echo "  🔍 Running BLAST with optimized parameters..."
+            blastn -query "$ASV_SEQUENCES" \
+                   -db "$DATABASE_PATH" \
+                   -out "$OUTPUT_DIR/taxonomy/blast_results.txt" \
+                   -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore stitle" \
+                   -max_target_seqs 10 \
+                   -perc_identity 70.0 \
+                   -qcov_hsp_perc 50.0 \
+                   -num_threads $THREADS
+            
+            # Verify BLAST output
+            blast_output="$OUTPUT_DIR/taxonomy/blast_results.txt"
+            if [[ -f "$blast_output" && -s "$blast_output" ]]; then
+                echo "  ✅ BLAST completed successfully"
+                
+                # Run comprehensive taxonomy analysis
+                echo "  📋 Running comprehensive taxonomy analysis..."
+                Rscript "$OUTPUT_DIR/scripts/comprehensive_taxonomy.R" \
+                        "$blast_output" \
+                        "$ASV_TABLE" \
+                        "$OUTPUT_DIR/final_reports" \
+                        "$DATABASE_TYPE"
+            else
+                echo "  ❌ BLAST failed - no output file created or file is empty"
+                exit 1
+            fi
+        else
+            echo -e "${RED}❌ No databases found - cannot perform taxonomy analysis${NC}"
+            exit 1
+        fi
+        ;;
+esac
+
+# Final summary with actual results verification
+echo ""
+echo -e "${GREEN}🎉 Fixed Unified ASV Pipeline Results Summary${NC}"
+echo "============================================="
+echo ""
+echo -e "${CYAN}📁 Results Location: $OUTPUT_DIR${NC}"
+echo ""
+
+# Check what was actually created
+echo -e "${BLUE}📊 Generated Files (Verified):${NC}"
+
+case $MODE in
+    "full")
+        echo "  🧬 ASV Analysis:"
+        
+        # Check ASV files
+        asv_sequences_found=false
+        asv_table_found=false
+        for method in "${ASV_METHODS_USED[@]}"; do
+            if [[ -f "$OUTPUT_DIR/intermediate/asv_sequences_${method}.fasta" ]]; then
+                echo "    ✅ intermediate/asv_sequences_${method}.fasta"
+                asv_sequences_found=true
+            fi
+            if [[ -f "$OUTPUT_DIR/intermediate/asv_table_${method}_renamed.csv" ]]; then
+                echo "    ✅ intermediate/asv_table_${method}_renamed.csv"
+                asv_table_found=true
+            fi
+        done
+        
+        # Check raw analysis files
+        if [[ -f "$OUTPUT_DIR/raw_analysis/dada2_filtering_report.csv" ]]; then
+            echo "    ✅ raw_analysis/dada2_filtering_report.csv"
+        fi
+        
+        # Check taxonomy files
+        if [[ "$DATABASE_FOUND" == true && ${#ASV_METHODS_USED[@]} -gt 0 ]]; then
+            echo "  🔬 Taxonomy Analysis:"
+            
+            taxonomy_files=(
+                "ASV_taxonomy_assignments.csv"
+                "sample_by_sample_taxonomy.csv" 
+                "species_abundance_summary.csv"
+                "method_species_comparison.csv"
+                "ecological_summary.csv"
+                "taxonomy_confidence_report.csv"
+            )
+            
+            for file in "${taxonomy_files[@]}"; do
+                if [[ -f "$OUTPUT_DIR/final_reports/$file" ]]; then
+                    echo "    ✅ final_reports/$file"
+                else
+                    echo "    ❌ final_reports/$file"
+                fi
+            done
+        else
+            echo "  🔬 Taxonomy Analysis: Skipped (no databases or ASV failures)"
+        fi
+        ;;
+    "taxonomy-only")
+        if [[ "$DATABASE_FOUND" == true ]]; then
+            echo "  🔬 Taxonomy Analysis:"
+            taxonomy_files=(
+                "ASV_taxonomy_assignments.csv"
+                "sample_by_sample_taxonomy.csv" 
+                "species_abundance_summary.csv"
+                "method_species_comparison.csv"
+                "ecological_summary.csv"
+                "taxonomy_confidence_report.csv"
+            )
+            
+            for file in "${taxonomy_files[@]}"; do
+                if [[ -f "$OUTPUT_DIR/final_reports/$file" ]]; then
+                    echo "    ✅ final_reports/$file"
+                else
+                    echo "    ❌ final_reports/$file"
+                fi
+            done
+        fi
+        ;;
+esac
+
+echo ""
+
+# Success/failure summary
+if [[ ${#ASV_METHODS_USED[@]} -gt 0 && "$asv_sequences_found" == true ]]; then
+    echo -e "${GREEN}🌟 Pipeline completed successfully!${NC}"
+    
+    if [[ "$DATABASE_FOUND" == true ]]; then
+        echo "  🔬 Taxonomy analysis: Completed"
+        echo "  📁 Check final_reports/ for species identification"
+    else
+        echo "  💡 To add taxonomy: Place databases in ~/databases/ and re-run taxonomy-only mode"
+    fi
+else
+    echo -e "${RED}❌ Pipeline failed - no ASV sequences generated${NC}"
+    echo ""
+    echo "🔍 Debug suggestions:"
+    echo "  1. Check input files exist and are readable"
+    echo "  2. Check logs: $OUTPUT_DIR/logs/"
+    echo "  3. Verify file permissions and free disk space"
+    echo "  4. Ensure required tools are installed"
+fi
+
+echo ""
+echo -e "${GREEN}✨ Analysis Complete! ✨${NC}"
