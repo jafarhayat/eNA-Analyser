@@ -5,6 +5,8 @@
 
 This script generates a fully-integrated, working eDNA ASV (Amplicon Sequence Variant) analysis pipeline with comprehensive species identification, method comparison, and customizable parameters.
 
+Claude ai has been used as an assistant in this project 
+
 ---
 
 ## 📋 Table of Contents
