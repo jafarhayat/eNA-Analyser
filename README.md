@@ -523,39 +523,6 @@ ls final_reports/
 # - location_diversity_summary.csv
 ```
 
----
-
-## 📝 Version Information
-
-**Package Creator Version**: 2.0 (Complete Working Version)
-
-**Generated Pipeline Version**: 2.0
-
-**Key Improvements Over v1.0:**
-- ✅ Real processing functions (no placeholders)
-- ✅ Complete DADA2 integration
-- ✅ Comprehensive taxonomy analysis
-- ✅ Working method comparison
-- ✅ Custom database support
-- ✅ All output files generated
-- ✅ Proper error handling
-- ✅ Detailed logging
-
----
-
-## 🤝 Contributing
-
-To improve the package creator or generated pipeline:
-
-1. **Fork** this repository
-2. **Create** a feature branch (`git checkout -b feature/improvement`)
-3. **Modify** `create_edna_pipeline_package.sh`
-4. **Test** by running the script and verifying the generated pipeline
-5. **Commit** your changes (`git commit -am 'Add feature'`)
-6. **Push** to the branch (`git push origin feature/improvement`)
-7. **Create** a Pull Request
-
----
 
 ## 📄 License
 
@@ -584,8 +551,7 @@ MIT License - Free to use, modify, and distribute
 ## 📧 Support
 
 - **GitHub Issues**: Report bugs or request features
-- **Documentation**: Check `docs/` in generated package
-- **Email**: [Your contact information]
+
 
 ---
 
@@ -635,5 +601,3 @@ ls final_reports/*.csv
 ---
 
 **Made with 🧬 for the eDNA community**
-
-*Last updated: 2024 | Version 2.0 Complete Working Release*
