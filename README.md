@@ -79,35 +79,13 @@ This creator script automatically generates:
 
 ## 🏁 Quick Start
 
-### Step 1: Run the Package Creator
+### Step 1: Install the Generated Pipeline
 
 ```bash
-# Make the creator script executable
-chmod +x create_edna_pipeline_package.sh
+cd eDNA-ASV-Pipline
+chmod +x Pipeline_install 
+./Pipeline_install 
 
-# Run it to generate the pipeline package
-./create_edna_pipeline_package.sh
-```
-
-**Output:**
-```
-🚀 Creating Complete GitHub-Ready eDNA ASV Pipeline Package
-============================================================
-📁 Creating package structure: eDNA-ASV-Pipeline
-  ✅ Package directory structure created
-📝 Creating fully working main eDNA pipeline script...
-  ✅ Main pipeline script created
-📝 Creating comprehensive working pipeline functions...
-  ✅ Comprehensive working pipeline functions created
-...
-✅ Complete GitHub-ready eDNA ASV Pipeline package created!
-```
-
-### Step 2: Install the Generated Pipeline
-
-```bash
-cd eDNA-ASV-Pipeline
-./install.sh
 ```
 
 ### Step 3: Use the Pipeline
