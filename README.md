@@ -34,10 +34,14 @@ conda activate edna-pipeline
 
 # 3. Database setting
 From the /Pipline-EVNA-eNA/Database.7z move files to /Pipline-EVNA-eNA-main/eDNA-ASV-Pipeline/Database
-You are ready to use ready Databases. Also you can create your own databases with CRABS database creator (https://github.com/gjeunen/reference_database_creator) and add to /Pipline-EVNA-eNA-main/eDNA-ASV-Pipeline/Database directory.
+You are ready to use ready Databases. Also you can create your own databases with CRABS database creator
+(https://github.com/gjeunen/reference_database_creator) and add to /Pipline-EVNA-eNA-main/eDNA-ASV-Pipeline/Database directory.
 
 # 4. Run analysis
 ./eDNA_pipeline.sh -i raw_data --database ncbi
+
+For further information about pipeline
+./eDNA_pipeline.sh -h
 
 
 ```
