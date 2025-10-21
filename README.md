@@ -40,7 +40,7 @@ You are ready to use ready Databases. Also you can create your own databases wit
 # 4. Run analysis
 ./eDNA_pipeline.sh -i raw_data --database ncbi
 
-For further information about pipeline
+# For further information about pipeline
 ./eDNA_pipeline.sh -h
 
 
