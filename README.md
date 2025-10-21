@@ -47,8 +47,10 @@ You are ready to use ready Databases. Also you can create your own databases wit
 ```
 
 ## ❗❗❗ If there is a problem with dada2 installation, use this script to install it manually:
-Rscript -e 'if(!require("BiocManager")) install.packages("BiocManager", repos="https://cloud.r-project.org/"); BiocManager::install("dada2", update=FALSE, ask=FALSE)'
 
+```bash
+Rscript -e 'if(!require("BiocManager")) install.packages("BiocManager", repos="https://cloud.r-project.org/"); BiocManager::install("dada2", update=FALSE, ask=FALSE)'
+```
 
 ## 📊 Comprehensive Output Files
 
