@@ -22,8 +22,12 @@
 # 1. Clone/download and install
 git clone https://github.com/yourusername/Pipline-EVNA-eNA
 cd Pipline-EVNA-eNA
-./install.sh
+chmod +x Pipeline_install
+./Pipeline_install
+
 cd eDNA-ASV-Pipeline
+chmod +x install.sh
+./install.sh
 
 # 2. Activate environment  
 conda activate edna-pipeline
