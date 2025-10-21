@@ -221,7 +221,7 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE) for deta
 - **DADA2**: Benjamin J Callahan et al.
 - **MIDORI2**: Machida et al.
 - **BLAST**: Altschul et al.
-- **Claude ai used as an assistant to create this pipline"
+- **Claude ai used as an assistant to create this pipline**
 ---
 
 ⭐ **Star this repository** if you find it useful!  
