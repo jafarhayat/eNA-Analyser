@@ -20,9 +20,10 @@
 
 ```bash
 # 1. Clone/download and install
-git clone https://github.com/yourusername/eDNA-ASV-Pipeline.git
-cd eDNA-ASV-Pipeline
+git clone https://github.com/yourusername/Pipline-EVNA-eNA
+cd Pipline-EVNA-eNA
 ./install.sh
+cd eDNA-ASV-Pipeline
 
 # 2. Activate environment  
 conda activate edna-pipeline
