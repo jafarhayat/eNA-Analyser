@@ -1,4 +1,4 @@
-# eDNA ASV Pipeline - Complete Version
+# Environmental Nucleic Acid ASV Pipeline - Complete Version
 
 🧬 **Complete pipeline for environmental DNA analysis from raw sequencing reads to comprehensive species identification**
 
@@ -11,7 +11,7 @@
 - 🧬 **Complete workflow**: Raw reads → ASVs → Comprehensive species reports
 - 🐟 **Optimized for 12S rRNA**: Marine and freshwater species detection
 - 📊 **Multiple databases**: Built-in MIDORI2/NCBI + custom database support
-- 🔬 **Method comparison**: eDNA vs EV.DNA analysis (optional with --single-method)
+- 🔬 **Method comparison**: eDNA/eRNA vs EV.DNA/EV.RNA analysis (optional with --single-method)
 - ⚙️ **Configurable parameters**: Identity thresholds, primers, threading
 - 📈 **Comprehensive outputs**: 6+ detailed analysis reports
 - 🔧 **One-command setup**: Automated conda installation
