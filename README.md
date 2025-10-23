@@ -48,8 +48,32 @@ You are ready to use ready Databases. Also you can create your own databases wit
 
 ## ❗❗❗ If there is a problem with dada2 installation, use this script to install it manually:
 
-```bash
-Rscript -e 'if(!require("BiocManager")) install.packages("BiocManager", repos="https://cloud.r-project.org/"); BiocManager::install("dada2", update=FALSE, ask=FALSE)'
+```bash# 1. Remove the problematic environment completely
+conda deactivate
+conda env remove -n edna-pipeline -y
+
+# 2. Clear conda cache
+conda clean --all -y
+
+# 3. Create environment with stricter dependency resolution
+conda create -n edna-pipeline -c conda-forge -c bioconda \
+    python=3.9 \
+    r-base=4.3 \
+    trimmomatic \
+    flash \
+    cutadapt \
+    blast \
+    r-dplyr \
+    r-tidyr \
+    r-stringr \
+    r-vegan \
+    r-ggplot2 \
+    bioconductor-dada2 \
+    -y
+
+# 4. Activate and test
+conda activate edna-pipeline
+R -e "library(dada2); packageVersion('dada2')"
 ```
 
 ## 📊 Comprehensive Output Files
