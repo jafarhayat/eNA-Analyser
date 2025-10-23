@@ -1,4 +1,4 @@
-# eDNA ASV Pipeline - Complete Working Version
+# eDNA ASV Pipeline - Complete Version
 
 🧬 **Complete pipeline for environmental DNA analysis from raw sequencing reads to comprehensive species identification**
 
