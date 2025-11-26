@@ -396,7 +396,7 @@ I welcome contributions to improve this pipeline! Here's how you can help:
 ### Reporting Issues
 
 If you encounter bugs or have suggestions:
-1. Check if the issue already exists in [Issues](https://github.com/yourusername/eDNA-12S-Pipeline/issues)
+1. Check if the issue already exists in [Issues](https://github.com/jafarhayat/eNA-Analyser/issues)
 2. Open a new issue with:
    - Clear description of the problem
    - Steps to reproduce
@@ -419,8 +419,10 @@ I'm particularly interested in contributions for:
 If you use this pipeline in your research, please cite:
 
 ```
-[Your Name]. (2024). eDNA 12S Metabarcoding Pipeline (Version 2.0.0) 
-[Software]. GitHub. https://github.com/yourusername/eDNA-12S-Pipeline
+(2025). eDNA 12S Metabarcoding Pipeline (Version 2.0.0) 
+GitHub. https://github.com/jafarhayat/eNA-Analyser/issues
+
+Citation for paper (will be updated)
 ```
 
 ### Key References for Tools Used
