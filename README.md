@@ -76,7 +76,7 @@ chmod +x create_edna_pipeline_v2.sh
 ```
 
 ```bash
-eDNA-12S-Pipeline/
+cd eDNA-12S-Pipeline
 ./install.sh
 ```
 
