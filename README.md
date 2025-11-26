@@ -64,13 +64,19 @@ This pipeline addresses these issues with a focus on:
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/eDNA-12S-Pipeline.git
-cd eDNA-12S-Pipeline
+git clone https://github.com/jafarhayat/eNA-Analyser.git
+cd eNA-Analyser
 ```
 
 ### Step 2: Run the Installation Script
 
 ```bash
+chmod +x create_edna_pipeline_v2.sh
+./create_edna_pipeline_v2.sh
+```
+
+```bash
+eDNA-12S-Pipeline/
 ./install.sh
 ```
 
@@ -93,8 +99,6 @@ Place your reference database files in the `Database/` directory:
 cp /path/to/your/reference_sequences.fasta Database/
 cp /path/to/your/taxonomy_mapping.csv Database/
 ```
-
-The BLAST database will be automatically built when you run the pipeline.
 
 ### Step 4: Activate the Environment
 
@@ -197,7 +201,6 @@ conda activate edna-pipeline
     -i /data/field_samples \
     -o my_results \
     -d Database \
-    --preset 12s-mifish \
     --asv-method dada2 \
     --max-ee 10 \
     --min-identity 70 \
@@ -317,41 +320,7 @@ This pipeline integrates several well-established bioinformatics tools:
 ### Data Analysis and Visualization
 
 - **R** (R Core Team 2023)
-  - **dplyr** - Data manipulation
-  - **tidyr** - Data tidying
-  - **vegan** - Ecological diversity analysis
-  - **ggplot2** - Data visualization
-  - **stringr** - String manipulation
 
-## Preset Primer Information
-
-### 12S-MiFish (Default)
-- **Forward**: ACTGGGATTAGATACCCC
-- **Reverse**: TAGAACAGGCTCCTCTAG
-- **Target**: Fish 12S rRNA MiFish region
-- **Amplicon**: ~170bp
-- **Reference**: Miya et al. (2015) Biological Conservation
-
-### 12S-Teleo
-- **Forward**: ACACCGCCCGTCACTCT
-- **Reverse**: CTTCCGGTACACTTACCATG
-- **Target**: Fish 12S rRNA Teleo region
-- **Amplicon**: ~160bp
-- **Reference**: Valentini et al. (2016) Molecular Ecology Resources
-
-### 16S-Bacteria
-- **Forward**: GTGYCAGCMGCCGCGGTAA (515F)
-- **Reverse**: GGACTACNVGGGTWTCTAAT (806R)
-- **Target**: Bacterial 16S V4 region
-- **Amplicon**: ~250bp
-- **Reference**: Caporaso et al. (2011) PNAS
-
-### COI-mlcoi
-- **Forward**: GGWACWGGWTGAACWGTWTAYCCYCC
-- **Reverse**: TANACYTCNGGRTGNCCRAARAAYCA
-- **Target**: Metazoan COI
-- **Amplicon**: ~313bp
-- **Reference**: Leray et al. (2013) Genome Biology
 
 ## Database Setup
 
@@ -418,14 +387,6 @@ For more issues, please open an [Issue](https://github.com/yourusername/eDNA-12S
 
 ## Performance
 
-Typical processing times on a system with 16GB RAM and 8 cores:
-
-| Dataset Size | Samples | Reads per Sample | Processing Time |
-|-------------|---------|------------------|-----------------|
-| Small       | 5-10    | 10,000-50,000   | 10-20 minutes   |
-| Medium      | 20-40   | 50,000-200,000  | 1-2 hours       |
-| Large       | 50-100  | 200,000-500,000 | 3-6 hours       |
-
 DADA2 is generally slower but more accurate than OTU clustering. Adjust `--threads` based on your system capabilities.
 
 ## Contributing
@@ -441,16 +402,6 @@ If you encounter bugs or have suggestions:
    - Steps to reproduce
    - Your system information (OS, conda version)
    - Relevant log files
-
-### Contributing Code
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/YourFeature`)
-3. Make your changes
-4. Test thoroughly
-5. Commit your changes (`git commit -m 'Add some feature'`)
-6. Push to the branch (`git push origin feature/YourFeature`)
-7. Open a Pull Request
 
 ### Areas for Contribution
 
@@ -497,8 +448,8 @@ Special thanks to:
 ## Contact
 
 - **GitHub Issues**: For bug reports and feature requests
-- **Email**: [your.email@example.com]
-- **ORCID**: [Your ORCID if applicable]
+- **Email**: [hayatovjafar@outlook.com]
+- **ORCID**: [https://orcid.org/0000-0003-3968-107X]
 
 ## Version History
 
