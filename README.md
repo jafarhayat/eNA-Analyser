@@ -1,13 +1,13 @@
 # eNA 12S Metabarcoding Pipeline
 
-A complete bioinformatics pipeline for processing environmental DNA (eDNA) samples from raw Illumina sequencing reads to species identification. This pipeline was developed to make eDNA analysis accessible and reproducible for researchers working with 12S rRNA amplicon sequencing data.
+A complete bioinformatics pipeline for processing environmental samples from raw Illumina sequencing reads to species identification. This pipeline was developed to make eDNA, eRNA. EV-DNA and EV-RNA analysis accessible and reproducible for researchers working with 12S rRNA amplicon sequencing data.
 
 [![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/yourusername/eDNA-12S-Pipeline/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## Overview
 
-I developed this pipeline to streamline the analysis of 12S rRNA environmental DNA data, specifically focusing on vertebrate species detection in marine and freshwater environments. The pipeline handles everything from raw paired-end FASTQ files through quality control, ASV/OTU generation, and taxonomic assignment, producing publication-ready results.
+I developed this pipeline to streamline the analysis of 12S rRNA environmental NA data, specifically focusing on vertebrate species detection in marine and freshwater environments. The pipeline handles everything from raw paired-end FASTQ files through quality control, ASV/OTU generation, and taxonomic assignment, producing publication-ready results.
 
 ### What It Does
 
