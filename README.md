@@ -1,4 +1,4 @@
-# eDNA 12S Metabarcoding Pipeline
+# eNA 12S Metabarcoding Pipeline
 
 A complete bioinformatics pipeline for processing environmental DNA (eDNA) samples from raw Illumina sequencing reads to species identification. This pipeline was developed to make eDNA analysis accessible and reproducible for researchers working with 12S rRNA amplicon sequencing data.
 
