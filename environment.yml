@@ -1,0 +1,29 @@
+name: edna-pipeline
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+
+dependencies:
+  # Core
+  - python=3.9
+  - r-base=4.3
+  
+  # Bioinformatics tools
+  - trimmomatic>=0.39
+  - flash>=1.2
+  - cutadapt>=4.0
+  - blast>=2.12
+  - vsearch>=2.21
+  
+  # R packages (base)
+  - r-dplyr>=1.0
+  - r-tidyr>=1.2
+  - r-tibble>=3.0
+  
+  # Utilities
+  - bc
+  - wget
+  - gzip
+  
+  # Note: DADA2 will be installed via BiocManager during install.sh

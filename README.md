@@ -1,473 +1,211 @@
-# eNA 12S Metabarcoding Pipeline
+# eDNA 12S Pipeline v3.0
 
-A complete bioinformatics pipeline for processing environmental samples from raw Illumina sequencing reads to species identification. This pipeline was developed to make eDNA, eRNA. EV-DNA and EV-RNA analysis accessible and reproducible for researchers working with 12S rRNA amplicon sequencing data.
+Complete bioinformatics pipeline for environmental DNA (eDNA) analysis, from raw Illumina reads to species identification.
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/yourusername/eDNA-12S-Pipeline/releases)
+[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/yourusername/eDNA-12S-Pipeline)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-## Overview
+## ✨ What's New in v3.0
 
-I developed this pipeline to streamline the analysis of 12S rRNA environmental NA data, specifically focusing on vertebrate species detection in marine and freshwater environments. The pipeline handles everything from raw paired-end FASTQ files through quality control, ASV/OTU generation, and taxonomic assignment, producing publication-ready results.
+- 🚀 **ASV-only mode** (`--no-blast`): Generate ASVs without taxonomy assignment
+- 🎯 **Alignment filtering** (`--min-alignment`): Filter by alignment length
+- 🔧 **Improved primer removal**: Proper linked adapter syntax for cutadapt
+- 📊 **Dual outputs**: Both filtered and unfiltered results (`*_ALL.csv`)
+- 🐛 **BLAST ID fix**: Handles `lcl|` prefix in BLAST output
+- 📖 **Better documentation**: Comprehensive help and examples
 
-### What It Does
+## ✨ Features
 
-- **Quality Control**: Removes low-quality bases and adapters
-- **Read Processing**: Merges paired-end reads and removes primer sequences  
-- **ASV/OTU Calling**: Generates sequence variants using either DADA2 or OTU clustering
-- **Taxonomy Assignment**: Matches sequences against reference databases using BLAST
-- **Report Generation**: Creates comprehensive species abundance and diversity reports
+- 🧬 **Complete Workflow**: Raw FASTQ → Quality Control → ASV/OTU Calling → Taxonomy → Reports
+- 🔬 **Dual ASV Methods**: Choose between DADA2 (exact sequences) or OTU clustering (VSEARCH)
+- 🧪 **MiFish-U primers**: Optimized for fish 12S metabarcoding
+- 📊 **Comprehensive Reports**: Sample-by-sample breakdown, species summaries, abundance tables
+- 🚀 **Easy Installation**: One-command conda-based setup
 
-### Why I Built This
-
-After working with multiple eDNA datasets, I found that existing pipelines were either:
-- Too complex for researchers without bioinformatics backgrounds
-- Lacked flexibility in primer selection and ASV methods
-- Had unreliable installation processes
-- Produced outputs that required extensive post-processing
-
-This pipeline addresses these issues with a focus on:
-- **Easy installation**: One-command conda-based setup
-- **Flexibility**: Support for multiple primer sets and ASV methods
-- **Reliability**: Bulletproof dependency management
-- **Usability**: Clear documentation and publication-ready outputs
-
-## Features
-
-✨ **Dual ASV Methods**
-- DADA2 exact sequence variants for high-resolution analysis
-- OTU clustering (VSEARCH) at customizable similarity thresholds (95%, 97%, 99%)
-
-🧬 **Multiple Primer Support**
-- Pre-configured presets: 12S-MiFish, 12S-Teleo, 16S-bacteria, COI-mlcoi
-- Custom primer option for any target region
-
-📊 **Comprehensive Outputs**
-- Species-by-sample breakdown tables
-- Abundance summaries with confidence scores
-- Taxonomy assignments with BLAST metrics
-- Detailed processing logs
-
-🚀 **Easy Installation**
-- Automated conda environment setup
-- Dependency verification
-- Database preparation
-
-## Requirements
-
-- **Operating System**: Linux or macOS (Windows users can use WSL2)
-- **RAM**: 8GB minimum (16GB+ recommended for large datasets)
-- **Storage**: 50GB+ for databases and intermediate files
-- **Software**: Conda or Miniconda
-
-## Installation
-
-### Step 1: Clone the Repository
+## 🚀 Quick Start
 
 ```bash
-git clone https://github.com/jafarhayat/eNA-Analyser.git
-cd eNA-Analyser
-```
-
-### Step 2: Run the Installation Script
-
-```bash
-chmod +x create_edna_pipeline_v2.sh
-./create_edna_pipeline_v2.sh
-```
-
-```bash
+# 1. Install
+git clone https://github.com/yourusername/eDNA-12S-Pipeline.git
 cd eDNA-12S-Pipeline
 ./install.sh
-```
 
-The installer will:
-1. Check for conda installation
-2. Create the `edna-pipeline` conda environment
-3. Install all required dependencies
-4. Set up DADA2 via BiocManager
-5. Build BLAST databases from your reference files
-6. Verify all tools are working
-
-This takes approximately 5-10 minutes on the first installation.
-
-### Step 3: Add Your Reference Database
-
-Place your reference database files in the `Database/` directory:
-
-```bash
-# Copy your database files
-cp /path/to/your/reference_sequences.fasta Database/
-cp /path/to/your/taxonomy_mapping.csv Database/
-```
-
-### Step 4: Activate the Environment
-
-```bash
+# 2. Activate environment
 conda activate edna-pipeline
+
+# 3. Run analysis
+./edna_pipeline.sh -i /path/to/samples -o results -d Database/
 ```
 
-### Step 5: Test the Installation
+## 📋 Requirements
 
-```bash
-./edna_pipeline.sh --help
-```
+- **System**: Linux or macOS (Windows via WSL2)
+- **RAM**: 8GB minimum (16GB+ recommended)
+- **Storage**: 50GB+ for database and results
+- **Software**: Conda/Miniconda
 
-You should see the help menu with all available options.
-
-## Usage
-
-### Input Data Structure
+## 📂 Input Requirements
 
 Organize your FASTQ files in sample folders:
 
 ```
-my_samples/
+samples/
 ├── sample1/
 │   ├── sample1_R1.fq.gz
 │   └── sample1_R2.fq.gz
 ├── sample2/
 │   ├── sample2_R1.fq.gz
 │   └── sample2_R2.fq.gz
-└── sample3/
-    ├── sample3_R1.fq.gz
-    └── sample3_R2.fq.gz
 ```
 
-The pipeline recognizes these naming patterns:
-- `*.R1.fq.gz` / `*.R2.fq.gz`
-- `*_R1_*.fastq.gz` / `*_R2_*.fastq.gz`
-- `*_1.fq.gz` / `*_2.fq.gz`
+## 🔬 Usage Examples
 
-### Basic Analysis
+### Standard Analysis (DADA2 + BLAST)
 
 ```bash
-# Activate environment
-conda activate edna-pipeline
-
-# Run with default settings (OTU clustering, MiFish primers)
-./edna_pipeline.sh -i /path/to/samples
+./edna_pipeline.sh -i samples/ -o results/ -d Database/
 ```
 
-### Using Different Primer Sets
+### ASV-Only Mode (No BLAST)
 
 ```bash
-# List available primer presets
-./edna_pipeline.sh --list-presets
-
-# Use Teleo 12S primers
-./edna_pipeline.sh -i samples/ --preset 12s-teleo
-
-# Use 16S bacterial primers
-./edna_pipeline.sh -i samples/ --preset 16s-bacteria
-
-# Use custom primers
-./edna_pipeline.sh -i samples/ --preset custom \
-    --forward-primer ACTGGGATTAGATACCCC \
-    --reverse-primer TAGAACAGGCTCCTCTAG
+./edna_pipeline.sh -i samples/ -o results/ --no-blast
 ```
 
-### Choosing ASV Method
+### Relaxed Filtering (Include More Matches)
 
 ```bash
-# Use DADA2 (exact sequence variants)
-./edna_pipeline.sh -i samples/ --asv-method dada2
-
-# Use OTU clustering at 97% similarity (default)
-./edna_pipeline.sh -i samples/ --asv-method otus
-
-# Use OTU clustering at 99% similarity
-./edna_pipeline.sh -i samples/ --asv-method otus --clustering-id 99
+./edna_pipeline.sh -i samples/ -o results/ -d Database/ \
+    --min-identity 90 --min-alignment 80
 ```
 
-### Adjusting DADA2 Parameters
+### Strict Species ID (High Confidence Only)
 
 ```bash
-# Strict filtering for high-quality data
-./edna_pipeline.sh -i samples/ --asv-method dada2 --max-ee 2
-
-# Relaxed filtering for degraded samples
-./edna_pipeline.sh -i samples/ --asv-method dada2 --max-ee 30
-
-# Custom length range
-./edna_pipeline.sh -i samples/ --asv-method dada2 \
-    --min-len 100 --max-len 200
+./edna_pipeline.sh -i samples/ -o results/ -d Database/ \
+    --min-identity 99 --min-alignment 150
 ```
 
-### Complete Example
+### OTU Clustering Instead of DADA2
 
 ```bash
-# Full analysis with custom settings
-./edna_pipeline.sh \
-    -i /data/field_samples \
-    -o my_results \
-    -d Database \
-    --asv-method dada2 \
-    --max-ee 10 \
-    --min-identity 70 \
-    --threads 8
+./edna_pipeline.sh -i samples/ -o results/ -d Database/ \
+    --method otus --cluster-id 97
 ```
 
-## Pipeline Steps
+### Custom Primers
 
-The pipeline consists of six main steps:
+```bash
+./edna_pipeline.sh -i samples/ -o results/ -d Database/ \
+    --forward-primer "ACTGGGATTAGATACCCC" \
+    --reverse-primer "TAGAACAGGCTCCTCTAG"
+```
 
-### 1. Quality Filtering (Trimmomatic)
-- Removes low-quality bases using sliding window approach
-- Crops reads to 300bp maximum
-- Filters out reads shorter than 50bp
-- Removes adapter sequences
+## 📊 Output Files
 
-### 2. Read Merging (FLASH)
-- Merges paired-end reads based on overlapping regions
-- Requires minimum 10bp overlap
-- Creates single consensus sequences
+### Main Reports (`reports/`)
 
-### 3. Primer Removal (Cutadapt)
-- Removes forward and reverse primer sequences
-- Handles degenerate bases in primers
-- Filters sequences by length (50-500bp)
-
-### 4. ASV/OTU Generation
-
-**DADA2 Method:**
-- Quality filtering with adjustable error thresholds
-- Error rate learning from data
-- Denoising and exact sequence variant inference
-- Chimera removal
-
-**OTU Method:**
-- Dereplication of identical sequences
-- Abundance-based sorting
-- Clustering at specified similarity (95%, 97%, or 99%)
-- De novo chimera detection
-- OTU table generation
-
-### 5. Taxonomic Assignment (BLAST)
-- Uses blastn-short algorithm optimized for amplicons
-- Searches against custom reference database
-- Filters hits by identity and coverage thresholds
-- Returns best match per sequence variant
-
-### 6. Report Generation (R)
-- Merges sequence data with taxonomy
-- Calculates abundance metrics
-- Generates species-by-sample breakdowns
-- Creates summary statistics
-- Assigns confidence scores
-
-## Output Files
-
-Results are organized in timestamped directories (`results_YYYYMMDD_HHMMSS/`):
-
-### Main Results (`final_reports/`)
-
-- **ASV_taxonomy_assignments.csv** or **OTU_taxonomy_assignments.csv**
-  - Complete taxonomic assignment for each sequence variant
-  - Columns: ASV/OTU_ID, Species, Genus, Percent_Identity, E_value, Confidence
-  
-- **sample_by_sample_taxonomy.csv**
-  - Detailed breakdown of species in each sample
-  - Columns: Sample_ID, ASV/OTU_ID, Species, Genus, Abundance, Confidence, Percent_Identity
-  
-- **species_by_sample.csv**
-  - Species presence and abundance per sample
-  - Columns: Sample_ID, Species, Genus, Total_Reads, ASV/OTU_Count, Avg_Identity
-  
-- **species_abundance_summary.csv**
-  - Overall species summary across all samples
-  - Columns: Species, Genus, Total_Reads, ASV/OTU_Count, Samples_Present, Avg_Identity
+| File | Description |
+|------|-------------|
+| `species_summary.csv` | Species list with read counts (filtered) |
+| `species_by_sample.csv` | Species per sample (filtered) |
+| `species_summary_ALL.csv` | All species (unfiltered) |
+| `species_by_sample_ALL.csv` | All species per sample (unfiltered) |
+| `sample_by_sample_taxonomy.csv` | All ASVs with taxonomy per sample |
+| `ASV_taxonomy.csv` | Taxonomy assignment per ASV |
 
 ### Intermediate Files (`intermediate/`)
 
-- `04_dada2/asvs_final.fasta` or `04_otus/otus_final.fasta` - Final sequence variants
-- `04_dada2/asv_table.csv` or `04_otus/otu_table.txt` - Abundance matrix
-- `01_trimmed/` - Quality-filtered reads
-- `02_merged/` - Merged paired-end reads
-- `03_primers_removed/` - Primer-trimmed sequences
+| File | Description |
+|------|-------------|
+| `04_asvs/asvs_final.fasta` | Final ASV sequences (primer-free) |
+| `04_asvs/asv_table.txt` | ASV abundance matrix |
 
-### Logs (`logs/`)
+## 🔍 Filtering Options
 
-- `pipeline_full.log` - Complete execution log with all steps
-- `pipeline_timestamps.log` - Timing information for each step
-- `trimmomatic.log`, `flash.log`, `cutadapt.log`, `dada2.log` - Tool-specific logs
+The pipeline provides two levels of output:
 
-## Bioinformatics Tools Used
+1. **Filtered files** (`species_summary.csv`, `species_by_sample.csv`): 
+   - Respect `--min-identity` and `--min-alignment` settings
+   - Default: ≥97% identity, ≥80bp alignment
 
-This pipeline integrates several well-established bioinformatics tools:
+2. **Unfiltered files** (`*_ALL.csv`):
+   - Include ALL BLAST hits regardless of thresholds
+   - Useful for exploring lower-confidence matches
 
-### Core Processing Tools
+## 🛠️ Pipeline Steps
 
-- **[Trimmomatic](http://www.usadellab.org/cms/?page=trimmomatic)** (Bolger et al. 2014)  
-  Quality filtering and adapter removal
-  
-- **[FLASH](https://ccb.jhu.edu/software/FLASH/)** (Magoč & Salzberg 2011)  
-  Fast Length Adjustment of SHort reads - merging paired-end sequences
-  
-- **[Cutadapt](https://cutadapt.readthedocs.io/)** (Martin 2011)  
-  Primer and adapter sequence removal
+1. **Quality Filtering** (Trimmomatic) - Remove low-quality bases
+2. **Read Merging** (FLASH) - Merge paired-end reads
+3. **Primer Removal** (Cutadapt) - Remove primer sequences using linked adapters
+4. **ASV Calling** (DADA2 or VSEARCH) - Generate sequence variants
+5. **Taxonomy Assignment** (BLAST) - Match against reference database
+6. **Report Generation** (R) - Create summary tables
 
-- **[VSEARCH](https://github.com/torognes/vsearch)** (Rognes et al. 2016)  
-  OTU clustering, dereplication, and chimera detection
-  
-- **[BLAST+](https://blast.ncbi.nlm.nih.gov/Blast.cgi)** (Camacho et al. 2009)  
-  Taxonomic assignment via sequence similarity search
+## 🗄️ Database Setup
 
-### ASV Calling
-
-- **[DADA2](https://benjjneb.github.io/dada2/)** (Callahan et al. 2016)  
-  Amplicon Sequence Variant inference via denoising algorithm
-
-### Data Analysis and Visualization
-
-- **R** (R Core Team 2023)
-
-
-## Database Setup
-
-The pipeline requires a reference database for taxonomic assignment. I've tested it with several databases:
-
-### Supported Database Formats
-
-1. **FASTA file** (required)
-   - Contains reference sequences
-   - Standard FASTA format with headers
-   - Name: `*.fasta` or `*.fa`
-
-2. **Taxonomy CSV file** (optional but recommended)
-   - Maps accessions to species names
-   - Required columns: `Accession`, `Species`, `Genus`
-   - Name: should contain "taxonomy" in filename
-
-### Recommended Databases for 12S
-
-- **MIDORI2** - Comprehensive metazoan reference  
-  Download: http://www.reference-midori.info/
-
-- **NCBI RefSeq** - Curated vertebrate sequences  
-  Download: https://www.ncbi.nlm.nih.gov/refseq/
-
-- **Custom databases** - Build your own using tools like [CRABS](https://github.com/gjeunen/reference_database_creator)
-
-## Troubleshooting
-
-### Common Issues
-
-**Conda not found**
-```bash
-# Install Miniconda
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-bash Miniconda3-latest-Linux-x86_64.sh
-```
-
-**DADA2 installation fails**
-```bash
-# Try manual installation
-conda activate edna-pipeline
-R
-> if (!require("BiocManager", quietly=TRUE)) install.packages("BiocManager")
-> BiocManager::install("dada2")
-```
-
-**No samples detected**
-- Check your directory structure matches expected format
-- Ensure R1 and R2 files are in the same folder
-- Verify file naming patterns (R1/R2 designation)
-
-**BLAST returns no hits**
-- Try lowering `--min-identity` threshold (default 70%)
-- Verify your database is correctly formatted
-- Check that primer regions are appropriate for your database
-
-**Out of memory errors**
-- Reduce `--threads` number
-- Process samples in smaller batches
-- Increase system RAM allocation
-
-For more issues, please open an [Issue](https://github.com/yourusername/eDNA-12S-Pipeline/issues) on GitHub.
-
-## Performance
-
-DADA2 is generally slower but more accurate than OTU clustering. Adjust `--threads` based on your system capabilities.
-
-## Contributing
-
-I welcome contributions to improve this pipeline! Here's how you can help:
-
-### Reporting Issues
-
-If you encounter bugs or have suggestions:
-1. Check if the issue already exists in [Issues](https://github.com/jafarhayat/eNA-Analyser/issues)
-2. Open a new issue with:
-   - Clear description of the problem
-   - Steps to reproduce
-   - Your system information (OS, conda version)
-   - Relevant log files
-
-### Areas for Contribution
-
-I'm particularly interested in contributions for:
-- Additional primer presets
-- Support for other marker genes (18S, ITS, etc.)
-- Integration with additional databases
-- Performance optimizations
-- Additional visualization outputs
-- Docker containerization
-- Unit tests
-
-## Citation
-
-If you use this pipeline in your research, please cite:
+Place your reference database files in the `Database/` directory:
 
 ```
-(2025). eDNA 12S Metabarcoding Pipeline (Version 2.0.0) 
-GitHub. https://github.com/jafarhayat/eNA-Analyser/issues
-
-Citation for paper (will be updated)
+Database/
+├── reference_sequences.fasta   # Required: FASTA sequences
+└── taxonomy_mapping.csv        # Optional: Taxonomy CSV
 ```
 
-### Key References for Tools Used
+The taxonomy CSV should have columns: `id`, `species`, `genus`, etc.
 
-- **DADA2**: Callahan et al. (2016) High-resolution sample inference from Illumina amplicon data. Nature Methods 13:581-583.
-- **VSEARCH**: Rognes et al. (2016) VSEARCH: a versatile open source tool for metagenomics. PeerJ 4:e2584.
-- **Trimmomatic**: Bolger et al. (2014) Trimmomatic: a flexible trimmer for Illumina sequence data. Bioinformatics 30:2114-2120.
-- **FLASH**: Magoč & Salzberg (2011) FLASH: fast length adjustment of short reads. Bioinformatics 27:2957-2963.
-- **Cutadapt**: Martin (2011) Cutadapt removes adapter sequences from high-throughput sequencing reads. EMBnet.journal 17:10-12.
+## 📚 Command Line Options
 
-## License
+```
+REQUIRED:
+    -i, --input DIR           Input directory with sample folders
+    -o, --output DIR          Output directory
+    -d, --database DIR        Reference database directory
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+PRIMER OPTIONS:
+    --forward-primer SEQ      Forward primer (default: MiFish-U F)
+    --reverse-primer SEQ      Reverse primer (default: MiFish-U R)
 
-## Acknowledgments
+METHOD OPTIONS:
+    --method METHOD           ASV method: dada2 or otus (default: dada2)
+    --threads NUM             Number of threads (default: 4)
 
-I want to acknowledge the developers of all the bioinformatics tools integrated in this pipeline. The open-source community's contributions to eDNA research have been invaluable.
+TAXONOMY FILTERING:
+    --min-identity NUM        Minimum BLAST identity % (default: 97)
+    --min-alignment NUM       Minimum alignment length bp (default: 80)
 
-Special thanks to:
-- The DADA2 team for their excellent ASV inference algorithm
-- The VSEARCH developers for a fast, reliable clustering tool
-- The Conda/Bioconda communities for package management
-- Everyone who has contributed to the tools listed above
+DADA2 OPTIONS:
+    --max-ee NUM              Max expected errors (default: 2)
+    --min-len NUM             Min ASV length bp (default: 100)
+    --max-len NUM             Max ASV length bp (default: 250)
 
-## Contact
+OTU OPTIONS:
+    --cluster-id NUM          OTU clustering identity % (default: 97)
 
-- **GitHub Issues**: For bug reports and feature requests
-- **Email**: [hayatovjafar@outlook.com]
-- **ORCID**: [https://orcid.org/0000-0003-3968-107X]
+SKIP OPTIONS:
+    --no-blast                Skip BLAST and report generation
+```
 
-## Version History
+## 📄 License
 
-- **v2.0.0** (2024)
-  - Improved installation reliability
-  - Added DADA2 support
-  - Multiple primer presets
-  - Enhanced documentation
-  - Comprehensive output reports
+MIT License - see LICENSE file for details
 
-- **v1.0.0** (2024)
-  - Initial release
-  - OTU-based analysis
-  - Basic taxonomic assignment
+## 🙏 Acknowledgments
+
+Built with:
+- [DADA2](https://benjjneb.github.io/dada2/)
+- [VSEARCH](https://github.com/torognes/vsearch)
+- [Trimmomatic](http://www.usadellab.org/cms/?page=trimmomatic)
+- [FLASH](https://ccb.jhu.edu/software/FLASH/)
+- [Cutadapt](https://cutadapt.readthedocs.io/)
+- [BLAST+](https://blast.ncbi.nlm.nih.gov/Blast.cgi)
+
+## 🔄 Version History
+
+- **v3.0.0** (2024) - ASV-only mode, alignment filtering, improved primer removal
+- **v2.0.0** (2024) - Multiple ASV methods, preset primers
+- **v1.0.0** (2024) - Initial release
 
 ---
 
-**Made for the eDNA research community** 🧬🌊
-
+Made with ❤️ for the eDNA community
