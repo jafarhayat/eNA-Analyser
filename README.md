@@ -202,7 +202,7 @@ Built with:
 
 ## 🔄 Version History
 
-- **v3.0.0** (2024) - ASV-only mode, alignment filtering, improved primer removal
+- **v3.0.0** (2024) - No Blast mode, alignment filtering, improved primer removal
 - **v2.0.0** (2024) - Multiple ASV methods, preset primers
 - **v1.0.0** (2024) - Initial release
 
