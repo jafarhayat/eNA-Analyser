@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =============================================================================
-# eDNA COMPLETE PIPELINE v3.0
+# eDNA COMPLETE PIPELINE v3.2
 # =============================================================================
 # Full eDNA metabarcoding analysis pipeline:
 #   1. Quality filtering (Trimmomatic)
@@ -10,15 +10,14 @@
 #   4. ASV/OTU generation (DADA2 or VSEARCH)
 #   5. BLAST annotation
 #   6. Species reports
+#   7. Fish/Non-fish classification
 #
-# KEY FIXES FROM DEBUGGING:
-# - Proper linked adapter syntax for primer removal
-# - Primer-free ASVs (~140-185bp for MiFish)
-# - Database must also be primer-free
-# - Full-length BLAST alignments (>150bp)
+# NEW IN v3.2:
+# - --min-reads filter to exclude low-abundance detections per sample
+# - Applies to species_by_sample.csv and fish_species.csv
+# - Keeps _ALL versions for comparison
 #
-# Author: eDNA Pipeline Project
-# Version: 3.0.0
+# Version: 3.2.0
 # =============================================================================
 
 set -e
@@ -31,7 +30,7 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-VERSION="3.0.0"
+VERSION="3.2.0"
 
 # =============================================================================
 # DEFAULTS
@@ -54,8 +53,14 @@ DEFAULT_DADA2_MAXLEN=250
 # OTU
 DEFAULT_CLUSTERING_IDENTITY=97
 
+# Read filter (NEW in v3.2)
+DEFAULT_MIN_READS=5
+
 # Skip options
 SKIP_BLAST=false
+
+# Fish split option
+FISH_SPLIT=false
 
 # =============================================================================
 # FUNCTIONS
@@ -92,6 +97,12 @@ TAXONOMY FILTERING OPTIONS:
                               Higher values (e.g., 99) only include confident matches
     --min-alignment NUM       Minimum alignment length in bp (default: 80)
 
+READ COUNT FILTERING (NEW in v3.2):
+    --min-reads NUM           Minimum reads per species per sample (default: 5)
+                              Species with fewer reads in a sample are excluded
+                              from species_by_sample.csv and fish_species.csv
+                              Unfiltered versions (*_ALL.csv) are kept for comparison
+
 DADA2 OPTIONS (when --method dada2):
     --max-ee NUM              Max expected errors (default: 2)
                               Higher = more permissive quality filtering
@@ -107,12 +118,26 @@ SKIP OPTIONS:
     --no-blast                Skip BLAST and report generation (ASV/OTU only)
                               Useful for quick ASV generation without taxonomy
 
+CLASSIFICATION OPTIONS:
+    --fish-split              Separate fish from non-fish species in output
+                              Requires: fish_classification_reference.csv in Database/
+                              Generates additional files:
+                                • fish_species.csv
+                                • non_fish_species.csv
+                                • contamination_detected.csv
+
 OUTPUT FILES:
     reports/
-    ├── species_summary.csv           - All species with read counts
-    ├── species_by_sample.csv         - Species per sample (aggregated)
+    ├── species_summary.csv           - All species with read counts (unfiltered)
+    ├── species_by_sample.csv         - Species per sample (filtered by --min-reads)
+    ├── species_by_sample_ALL.csv     - Species per sample (unfiltered, for comparison)
     ├── sample_by_sample_taxonomy.csv - All ASVs per sample with taxonomy
-    └── ASV_taxonomy.csv              - Taxonomy for each ASV
+    ├── ASV_taxonomy.csv              - Taxonomy for each ASV
+    └── (with --fish-split):
+        ├── fish_species.csv          - Fish species only (filtered by --min-reads)
+        ├── fish_species_ALL.csv      - Fish species (unfiltered, for comparison)
+        ├── non_fish_species.csv      - Non-fish vertebrates
+        └── contamination_detected.csv - Potential contaminants
 
 EXAMPLES:
     # Standard DADA2 analysis with default settings
@@ -124,11 +149,17 @@ EXAMPLES:
     # Strict species identification (99%+ identity)
     $0 -i raw_data/ -o results/ -d reference_db/ --min-identity 99 --min-alignment 150
 
+    # Filter out low-abundance detections (min 10 reads per sample)
+    $0 -i raw_data/ -o results/ -d reference_db/ --min-reads 10
+
+    # Separate fish from non-fish species
+    $0 -i raw_data/ -o results/ -d reference_db/ --fish-split
+
+    # Combined: fish split with strict read filter
+    $0 -i raw_data/ -o results/ -d reference_db/ --fish-split --min-reads 20
+
     # Use OTU clustering instead of DADA2
     $0 -i raw_data/ -o results/ -d reference_db/ --method otus --cluster-id 97
-
-    # OTU clustering at 99% (finer resolution)
-    $0 -i raw_data/ -o results/ -d reference_db/ --method otus --cluster-id 99
 
     # Custom primers with relaxed quality filtering
     $0 -i raw_data/ -o results/ -d reference_db/ \\
@@ -185,6 +216,7 @@ THREADS="$DEFAULT_THREADS"
 ASV_METHOD="$DEFAULT_ASV_METHOD"
 MIN_IDENTITY="$DEFAULT_MIN_IDENTITY"
 MIN_ALIGNMENT="$DEFAULT_MIN_ALIGNMENT"
+MIN_READS="$DEFAULT_MIN_READS"
 CLUSTERING_IDENTITY="$DEFAULT_CLUSTERING_IDENTITY"
 DADA2_MAXEE="$DEFAULT_DADA2_MAXEE"
 DADA2_MINLEN="$DEFAULT_DADA2_MINLEN"
@@ -201,11 +233,13 @@ while [[ $# -gt 0 ]]; do
         --threads) THREADS="$2"; shift 2 ;;
         --min-identity) MIN_IDENTITY="$2"; shift 2 ;;
         --min-alignment) MIN_ALIGNMENT="$2"; shift 2 ;;
+        --min-reads) MIN_READS="$2"; shift 2 ;;
         --cluster-id) CLUSTERING_IDENTITY="$2"; shift 2 ;;
         --max-ee) DADA2_MAXEE="$2"; shift 2 ;;
         --min-len) DADA2_MINLEN="$2"; shift 2 ;;
         --max-len) DADA2_MAXLEN="$2"; shift 2 ;;
         --no-blast) SKIP_BLAST=true; shift ;;
+        --fish-split) FISH_SPLIT=true; shift ;;
         -h|--help) show_usage; exit 0 ;;
         -v|--version) echo "v${VERSION}"; exit 0 ;;
         *) log_error "Unknown option: $1"; exit 1 ;;
@@ -231,11 +265,26 @@ fi
 # Find database files (only if BLAST is enabled)
 DB_FASTA=""
 DB_TAXONOMY=""
+FISH_REFERENCE=""
+
 if [[ "$SKIP_BLAST" != "true" ]]; then
     [[ ! -d "$DB_DIR" ]] && { log_error "Database not found: $DB_DIR"; exit 1; }
     DB_FASTA=$(ls "$DB_DIR"/*.fasta "$DB_DIR"/*.fa 2>/dev/null | head -1)
     DB_TAXONOMY=$(ls "$DB_DIR"/*taxonomy*.csv "$DB_DIR"/*_tax*.csv 2>/dev/null | head -1)
     [[ -z "$DB_FASTA" ]] && { log_error "No FASTA in $DB_DIR"; exit 1; }
+    
+    # Check for fish classification reference (for --fish-split)
+    if [[ "$FISH_SPLIT" == "true" ]]; then
+        FISH_REFERENCE=$(ls "$DB_DIR"/fish_classification_reference.csv "$DB_DIR"/fish_classification*.csv "$DB_DIR"/fish_reference*.csv 2>/dev/null | head -1)
+        if [[ -z "$FISH_REFERENCE" ]]; then
+            log_error "Fish classification reference not found in $DB_DIR"
+            echo ""
+            echo "  To use --fish-split, you need fish_classification_reference.csv"
+            echo "  Generate it with: python build_fish_reference.py /path/to/ncbi_taxdump/"
+            echo "  Then copy it to: $DB_DIR/"
+            exit 1
+        fi
+    fi
 fi
 
 # Check dependencies
@@ -299,6 +348,11 @@ if [[ "$SKIP_BLAST" == "true" ]]; then
     echo "📊 BLAST: SKIPPED (--no-blast mode)"
 else
     echo "📊 BLAST: min_identity=${MIN_IDENTITY}%, min_alignment=${MIN_ALIGNMENT}bp"
+    echo "📊 Read filter: min_reads=${MIN_READS} per sample"
+fi
+if [[ "$FISH_SPLIT" == "true" ]]; then
+    echo "🐟 Fish split: ENABLED"
+    echo "   Reference: $(basename "$FISH_REFERENCE")"
 fi
 echo "⚙️  Threads: $THREADS"
 echo ""
@@ -609,6 +663,7 @@ asv_table_file <- args[3]
 output_dir <- args[4]
 min_identity <- as.numeric(args[5])
 min_alignment <- as.numeric(args[6])
+min_reads <- as.numeric(args[7])
 
 cat("\n")
 cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
@@ -873,12 +928,12 @@ if (file.exists(asv_table_file)) {
     }
 }
 
-# Create species summary - FILTERED by min_identity
+# Create species summary - FILTERED by min_identity (NOT by min_reads - for comparison)
 # Ensure Identity is numeric
 best_hits$Identity <- as.numeric(best_hits$Identity)
 best_hits$Alignment_Length <- as.numeric(best_hits$Alignment_Length)
 
-# Filtered species summary (respects --min-identity and --min-alignment)
+# Filtered species summary (respects --min-identity and --min-alignment, but NOT --min-reads)
 species_summary <- best_hits %>%
     filter(!is.na(species) & species != "") %>%
     filter(Identity >= min_identity & Alignment_Length >= min_alignment) %>%
@@ -949,7 +1004,7 @@ if (!is.null(asv_table) && nrow(asv_table) > 0) {
         arrange(desc(Total_Reads))
 }
 
-# Save filtered summary (main output)
+# Save filtered summary (main output - NOT filtered by min_reads, for comparison)
 write.csv(species_summary, file.path(output_dir, "species_summary.csv"), row.names = FALSE)
 cat(sprintf("Saved: %s\n", file.path(output_dir, "species_summary.csv")))
 
@@ -984,8 +1039,8 @@ if (!is.null(asv_table) && nrow(asv_table) > 0 && length(samples) > 0) {
               row.names = FALSE)
     cat(sprintf("Saved: %s\n", file.path(output_dir, "sample_by_sample_taxonomy.csv")))
     
-    # Species by sample (aggregated) - FILTERED by min_identity!
-    species_by_sample <- asv_with_tax %>%
+    # Species by sample (aggregated) - UNFILTERED version (for comparison)
+    species_by_sample_all <- asv_with_tax %>%
         filter(!is.na(species) & species != "" & species != "Unclassified") %>%
         filter(Identity >= min_identity & Alignment_Length >= min_alignment) %>%
         group_by(Sample, species) %>%
@@ -997,41 +1052,40 @@ if (!is.null(asv_table) && nrow(asv_table) > 0 && length(samples) > 0) {
         ) %>%
         arrange(Sample, desc(Total_Reads))
     
-    write.csv(species_by_sample, file.path(output_dir, "species_by_sample.csv"), 
-              row.names = FALSE)
-    cat(sprintf("Saved: %s\n", file.path(output_dir, "species_by_sample.csv")))
-    
-    # Also create an UNFILTERED version for reference
-    species_by_sample_all <- asv_with_tax %>%
-        filter(!is.na(species) & species != "" & species != "Unclassified") %>%
-        group_by(Sample, species) %>%
-        summarise(
-            Total_Reads = sum(Reads),
-            ASV_Count = n_distinct(ASV_ID),
-            Mean_Identity = round(mean(Identity, na.rm = TRUE), 2),
-            .groups = 'drop'
-        ) %>%
-        arrange(Sample, desc(Total_Reads))
-    
     write.csv(species_by_sample_all, file.path(output_dir, "species_by_sample_ALL.csv"), 
               row.names = FALSE)
+    cat(sprintf("Saved: %s (unfiltered by min-reads)\n", file.path(output_dir, "species_by_sample_ALL.csv")))
+    
+    # Species by sample - FILTERED by min_reads (main output)
+    species_by_sample <- species_by_sample_all %>%
+        filter(Total_Reads >= min_reads)
+    
+    write.csv(species_by_sample, file.path(output_dir, "species_by_sample.csv"), 
+              row.names = FALSE)
+    cat(sprintf("Saved: %s (filtered: min_reads >= %d)\n", file.path(output_dir, "species_by_sample.csv"), min_reads))
+    
+    # Report filtering effect
+    removed_count <- nrow(species_by_sample_all) - nrow(species_by_sample)
+    cat(sprintf("\n📊 Read filter effect: %d species-sample detections removed (< %d reads)\n", 
+                removed_count, min_reads))
     
     # Print per-sample summary (using filtered results)
     cat("\n")
     cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-    cat(sprintf("RESULTS BY SAMPLE (filtered: identity >= %d%%, alignment >= %dbp)\n", 
-                min_identity, min_alignment))
+    cat(sprintf("RESULTS BY SAMPLE (filtered: identity >= %d%%, alignment >= %dbp, reads >= %d)\n", 
+                min_identity, min_alignment, min_reads))
     cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
     
     for (samp in unique(samples)) {
         samp_species <- species_by_sample %>% filter(Sample == samp)
+        samp_species_all <- species_by_sample_all %>% filter(Sample == samp)
         samp_reads <- sum(asv_long$Reads[asv_long$Sample == samp])
         if (nrow(samp_species) > 0) {
-            cat(sprintf("  %s: %d species, %d total reads\n", 
-                        samp, nrow(samp_species), samp_reads))
+            cat(sprintf("  %s: %d species (%d before filter), %d total reads\n", 
+                        samp, nrow(samp_species), nrow(samp_species_all), samp_reads))
         } else {
-            cat(sprintf("  %s: 0 classified species, %d total reads\n", 
-                        samp, samp_reads))
+            cat(sprintf("  %s: 0 classified species (%d before filter), %d total reads\n", 
+                        samp, nrow(samp_species_all), samp_reads))
         }
     }
 }
@@ -1079,9 +1133,190 @@ Rscript "$OUTPUT_DIR/generate_reports.R" \
     "$OUTPUT_DIR/reports" \
     "$MIN_IDENTITY" \
     "$MIN_ALIGNMENT" \
+    "$MIN_READS" \
     2>&1 | tee -a "$OUTPUT_DIR/logs/reports.log"
 
 log_success "Reports generated"
+
+# =============================================================================
+# STEP 7: FISH/NON-FISH CLASSIFICATION (if --fish-split enabled)
+# =============================================================================
+
+if [[ "$FISH_SPLIT" == "true" ]]; then
+    log_step "STEP 7: Fish/Non-fish Classification"
+    
+    echo "   Using reference: $(basename "$FISH_REFERENCE")"
+    
+    # Generate fish split reports with R
+    cat > "$OUTPUT_DIR/fish_split.R" << 'FISHSPLIT_R'
+suppressPackageStartupMessages({
+    library(dplyr)
+})
+
+args <- commandArgs(trailingOnly = TRUE)
+species_file <- args[1]
+fish_reference_file <- args[2]
+output_dir <- args[3]
+min_reads <- as.numeric(args[4])
+
+cat("\n")
+cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+cat("FISH/NON-FISH CLASSIFICATION\n")
+cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
+# Read species data
+species_data <- read.csv(species_file, stringsAsFactors = FALSE)
+cat(sprintf("Species to classify: %d\n", nrow(species_data)))
+
+# Read fish reference
+fish_ref <- read.csv(fish_reference_file, stringsAsFactors = FALSE)
+cat(sprintf("Fish reference entries: %d\n", nrow(fish_ref)))
+
+# Check fish reference structure
+cat(sprintf("Fish reference columns: %s\n", paste(names(fish_ref), collapse=", ")))
+
+# Count by category in reference
+if ("category" %in% names(fish_ref)) {
+    ref_summary <- table(fish_ref$category)
+    cat("\nReference database composition:\n")
+    for (cat_name in names(ref_summary)) {
+        cat(sprintf("  %s: %d\n", cat_name, ref_summary[cat_name]))
+    }
+}
+
+# Standardize species names for matching (lowercase, trim whitespace)
+species_data$species_clean <- trimws(tolower(species_data$species))
+fish_ref$species_clean <- trimws(tolower(fish_ref$species))
+
+# Match species against reference
+species_data <- species_data %>%
+    left_join(
+        fish_ref %>% select(species_clean, category, is_fish, is_contamination, 
+                           any_of(c("family", "order", "class"))),
+        by = "species_clean"
+    )
+
+# Fill in missing classifications
+species_data$category[is.na(species_data$category)] <- "Unknown"
+species_data$is_fish[is.na(species_data$is_fish)] <- FALSE
+species_data$is_contamination[is.na(species_data$is_contamination)] <- FALSE
+
+# Convert logical if needed
+species_data$is_fish <- as.logical(species_data$is_fish)
+species_data$is_contamination <- as.logical(species_data$is_contamination)
+
+# Override category for contamination
+species_data$category[species_data$is_contamination == TRUE] <- "Contamination"
+
+# Summary
+cat("\n")
+cat("Classification Results:\n")
+cat(sprintf("  🐟 Fish species:        %d\n", sum(species_data$is_fish == TRUE)))
+cat(sprintf("  🦎 Non-fish species:    %d\n", sum(species_data$category == "Non-fish")))
+cat(sprintf("  ⚠️  Contamination:       %d\n", sum(species_data$is_contamination == TRUE)))
+cat(sprintf("  ❓ Unknown:             %d\n", sum(species_data$category == "Unknown")))
+
+# Remove helper column before saving
+species_data$species_clean <- NULL
+
+# Split into separate files
+fish_species_all <- species_data %>% 
+    filter(is_fish == TRUE) %>%
+    arrange(desc(Total_Reads))
+
+non_fish_species <- species_data %>% 
+    filter(category == "Non-fish") %>%
+    arrange(desc(Total_Reads))
+
+contamination <- species_data %>% 
+    filter(is_contamination == TRUE) %>%
+    arrange(desc(Total_Reads))
+
+unknown_species <- species_data %>%
+    filter(category == "Unknown") %>%
+    arrange(desc(Total_Reads))
+
+# Apply min_reads filter for fish_species (main output)
+fish_species <- fish_species_all %>%
+    filter(Total_Reads >= min_reads)
+
+# Save files
+# Fish species - UNFILTERED (for comparison)
+write.csv(fish_species_all, file.path(output_dir, "fish_species_ALL.csv"), row.names = FALSE)
+cat(sprintf("\nSaved: fish_species_ALL.csv (%d species, unfiltered)\n", nrow(fish_species_all)))
+
+# Fish species - FILTERED by min_reads (main output)
+write.csv(fish_species, file.path(output_dir, "fish_species.csv"), row.names = FALSE)
+cat(sprintf("Saved: fish_species.csv (%d species, filtered: Total_Reads >= %d)\n", nrow(fish_species), min_reads))
+
+# Report filtering effect
+removed_fish <- nrow(fish_species_all) - nrow(fish_species)
+if (removed_fish > 0) {
+    cat(sprintf("  └─ %d fish species removed by min-reads filter\n", removed_fish))
+}
+
+write.csv(non_fish_species, file.path(output_dir, "non_fish_species.csv"), row.names = FALSE)
+cat(sprintf("Saved: non_fish_species.csv (%d species)\n", nrow(non_fish_species)))
+
+write.csv(contamination, file.path(output_dir, "contamination_detected.csv"), row.names = FALSE)
+cat(sprintf("Saved: contamination_detected.csv (%d species)\n", nrow(contamination)))
+
+if (nrow(unknown_species) > 0) {
+    write.csv(unknown_species, file.path(output_dir, "unknown_classification.csv"), row.names = FALSE)
+    cat(sprintf("Saved: unknown_classification.csv (%d species)\n", nrow(unknown_species)))
+}
+
+# Print top fish species (filtered)
+if (nrow(fish_species) > 0) {
+    cat("\n")
+    cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    cat(sprintf("TOP FISH SPECIES DETECTED (filtered: Total_Reads >= %d)\n", min_reads))
+    cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    
+    top_n <- min(15, nrow(fish_species))
+    for (i in 1:top_n) {
+        sp <- fish_species$species[i]
+        reads <- fish_species$Total_Reads[i]
+        fam <- ifelse("family" %in% names(fish_species) && !is.na(fish_species$family[i]), 
+                      fish_species$family[i], "")
+        
+        sp_display <- ifelse(nchar(sp) > 35, paste0(substr(sp, 1, 32), "..."), sp)
+        
+        if (fam != "") {
+            cat(sprintf("  %2d. %-35s %7d reads  [%s]\n", i, sp_display, reads, fam))
+        } else {
+            cat(sprintf("  %2d. %-35s %7d reads\n", i, sp_display, reads))
+        }
+    }
+}
+
+# Print contamination if any
+if (nrow(contamination) > 0) {
+    cat("\n")
+    cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    cat("⚠️  CONTAMINATION DETECTED\n")
+    cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    
+    for (i in 1:nrow(contamination)) {
+        sp <- contamination$species[i]
+        reads <- contamination$Total_Reads[i]
+        cat(sprintf("  ⚠️  %-35s %7d reads\n", sp, reads))
+    }
+}
+
+cat("\n")
+cat("Fish/Non-fish classification complete!\n")
+FISHSPLIT_R
+
+    Rscript "$OUTPUT_DIR/fish_split.R" \
+        "$OUTPUT_DIR/reports/species_summary.csv" \
+        "$FISH_REFERENCE" \
+        "$OUTPUT_DIR/reports" \
+        "$MIN_READS" \
+        2>&1 | tee -a "$OUTPUT_DIR/logs/fish_split.log"
+    
+    log_success "Fish/Non-fish classification complete"
+fi
 
 # =============================================================================
 # SUMMARY
@@ -1112,11 +1347,24 @@ fi
 
 echo "📊 Final Reports (in reports/):"
 echo "  • species_summary.csv                   - Species list (filtered by identity/alignment)"
-echo "  • species_by_sample.csv                 - Species per sample (filtered)"
+echo "  • species_by_sample.csv                 - Species per sample (filtered by min-reads)"
+echo "  • species_by_sample_ALL.csv             - Species per sample (unfiltered, for comparison)"
 echo "  • species_summary_ALL.csv               - All species (unfiltered, for reference)"
-echo "  • species_by_sample_ALL.csv             - All species per sample (unfiltered)"
 echo "  • sample_by_sample_taxonomy.csv         - All ${UNIT_PLURAL} with taxonomy per sample"
 echo "  • ${UNIT_NAME}_taxonomy.csv                 - Taxonomy assignment per ${UNIT_NAME}"
+
+if [[ "$FISH_SPLIT" == "true" ]]; then
+    echo ""
+    echo "🐟 Fish Classification Reports:"
+    echo "  • fish_species.csv                      - Fish species (filtered by min-reads)"
+    echo "  • fish_species_ALL.csv                  - Fish species (unfiltered, for comparison)"
+    echo "  • non_fish_species.csv                  - Non-fish vertebrates"
+    echo "  • contamination_detected.csv            - Potential contaminants"
+    if [[ -f "$OUTPUT_DIR/reports/unknown_classification.csv" ]]; then
+        echo "  • unknown_classification.csv            - Species not in reference"
+    fi
+fi
+
 echo ""
 echo "📁 Intermediate Files:"
 echo "  • intermediate/${UNIT_DIR}/${UNIT_FILE}      - Final ${UNIT_NAME} sequences (primer-free)"
@@ -1134,6 +1382,18 @@ if [[ -f "$OUTPUT_DIR/reports/species_summary.csv" ]]; then
     SPECIES_ALL=${SPECIES_ALL:-0}
     echo "  • Species identified: $SPECIES_COUNT (filtered) / $SPECIES_ALL (total)"
 fi
+
+if [[ "$FISH_SPLIT" == "true" && -f "$OUTPUT_DIR/reports/fish_species.csv" ]]; then
+    FISH_COUNT=$(tail -n +2 "$OUTPUT_DIR/reports/fish_species.csv" 2>/dev/null | wc -l)
+    FISH_COUNT=${FISH_COUNT:-0}
+    FISH_ALL=$(tail -n +2 "$OUTPUT_DIR/reports/fish_species_ALL.csv" 2>/dev/null | wc -l)
+    FISH_ALL=${FISH_ALL:-0}
+    CONTAM_COUNT=$(tail -n +2 "$OUTPUT_DIR/reports/contamination_detected.csv" 2>/dev/null | wc -l)
+    CONTAM_COUNT=${CONTAM_COUNT:-0}
+    echo "  • Fish species: $FISH_COUNT (filtered) / $FISH_ALL (total)"
+    echo "  • Contamination detected: $CONTAM_COUNT"
+fi
+
 echo ""
 echo "🔬 Analysis Method: $ASV_METHOD"
 if [[ "$ASV_METHOD" == "dada2" ]]; then
@@ -1143,10 +1403,11 @@ else
     echo "   └─ OTU clustering at ${CLUSTERING_IDENTITY}% similarity"
 fi
 echo ""
-echo "🔍 Taxonomy Filter Settings:"
+echo "🔍 Filter Settings:"
 echo "   └─ Minimum identity: ${MIN_IDENTITY}%"
 echo "   └─ Minimum alignment: ${MIN_ALIGNMENT}bp"
-echo "   └─ To change: use --min-identity and --min-alignment options"
+echo "   └─ Minimum reads per sample: ${MIN_READS}"
+echo "   └─ To change: use --min-identity, --min-alignment, --min-reads options"
 echo ""
 echo "🧬 Primers used (MiFish-U 12S):"
 echo "   └─ Forward (${#FORWARD_PRIMER}bp): $FORWARD_PRIMER"
@@ -1157,7 +1418,11 @@ echo ""
 echo "💡 Tips:"
 echo "   • To include lower confidence matches: --min-identity 90"
 echo "   • For strict species-level ID only: --min-identity 99 --min-alignment 150"
+echo "   • To change read threshold: --min-reads 10 (current: ${MIN_READS})"
 echo "   • Check *_ALL.csv files for unfiltered results"
+if [[ "$FISH_SPLIT" != "true" ]]; then
+    echo "   • To separate fish from non-fish: --fish-split"
+fi
 echo ""
 echo -e "${GREEN}✨ Analysis complete! ✨${NC}"
 echo ""
