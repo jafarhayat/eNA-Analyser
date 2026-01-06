@@ -9,7 +9,7 @@
 ## Installation (2 minutes)
 
 ```bash
-git clone https://github.com/yourusername/eDNA-12S-Pipeline.git
+git clone https://github.com/jafarhayat/eNA-Analyser.git
 cd eDNA-12S-Pipeline
 ./install.sh
 ```
