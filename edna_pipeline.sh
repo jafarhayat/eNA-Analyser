@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # =============================================================================
-# eDNA COMPLETE PIPELINE v3.2
+# eNA COMPLETE PIPELINE v3.2
 # =============================================================================
-# Full eDNA metabarcoding analysis pipeline:
+# Full eNA metabarcoding analysis pipeline:
 #   1. Quality filtering (Trimmomatic)
 #   2. Read merging (FLASH)
 #   3. Primer removal (Cutadapt - LINKED ADAPTERS)
@@ -69,10 +69,10 @@ FISH_SPLIT=false
 show_usage() {
     cat << EOF
 ================================================================================
-eDNA COMPLETE PIPELINE v${VERSION}
+eNA COMPLETE PIPELINE v${VERSION}
 ================================================================================
 
-Complete eDNA metabarcoding analysis with species identification.
+Complete eNA metabarcoding analysis with species identification.
 
 USAGE:
     $0 -i INPUT_DIR -o OUTPUT_DIR -d DATABASE_DIR [OPTIONS]
@@ -328,7 +328,7 @@ exec > >(tee -a "$LOGFILE") 2>&1
 # Header
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║              eDNA COMPLETE PIPELINE v${VERSION}                            ║${NC}"
+echo -e "${GREEN}║              eNA COMPLETE PIPELINE v${VERSION}                            ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo "📁 Input:    $SEQUENCES_DIR"
