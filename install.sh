@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# eDNA 12S Pipeline v3.0 - Installation Script
+# eNA 12S Pipeline v3.0 - Installation Script
 # Bulletproof dependency installation with comprehensive checking
 
 set -e
