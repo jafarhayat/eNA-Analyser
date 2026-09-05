@@ -29,7 +29,7 @@ conda activate edna-pipeline
 ./edna_pipeline.sh -i /path/to/samples -o results -d Database/
 ```
 
-## 📋 Requirements
+## Requirements
 
 - **System**: Linux or macOS (Windows via WSL2)
 - **RAM**: 8GB minimum (16GB+ recommended)
