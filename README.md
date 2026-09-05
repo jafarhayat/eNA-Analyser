@@ -6,15 +6,15 @@ Complete bioinformatics pipeline for environmental NA (eNA) analysis, from raw I
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 
-## ✨ Features
+## Features
 
-- 🧬 **Complete Workflow**: Raw FASTQ → Quality Control → ASV/OTU Calling → Taxonomy → Reports
-- 🔬 **Dual ASV Methods**: Choose between DADA2 (exact sequences) or OTU clustering (VSEARCH)
-- 🧪 **MiFish-U primers**: Optimized for fish 12S metabarcoding
-- 📊 **Comprehensive Reports**: Sample-by-sample breakdown, species summaries, abundance tables
-- 🚀 **Easy Installation**: One-command conda-based setup
+- **Complete Workflow**: Raw FASTQ → Quality Control → ASV/OTU Calling → Taxonomy → Reports
+- **Dual ASV Methods**: Choose between DADA2 (exact sequences) or OTU clustering (VSEARCH)
+- **MiFish-U primers**: Optimized for fish 12S metabarcoding
+- **Comprehensive Reports**: Sample-by-sample breakdown, species summaries, abundance tables
+- **Easy Installation**: One-command conda-based setup
 
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
 # 1. Install
@@ -36,7 +36,7 @@ conda activate edna-pipeline
 - **Storage**: 50GB+ for database and results
 - **Software**: Conda/Miniconda
 
-## 📂 Input Requirements
+## Input Requirements
 
 Organize your FASTQ files in sample folders:
 
@@ -86,7 +86,7 @@ reference_db/
 └── fish_classification_reference.csv    # (optional, for --fish-split)
 ```
 
-## ⚙️ Options
+## Options
 
 ### Required Parameters
 
@@ -134,7 +134,7 @@ reference_db/
 | `--forward-primer SEQ` | Custom forward primer |
 | `--reverse-primer SEQ` | Custom reverse primer |
 
-## 📊 Output Files
+## Output Files
 
 ### Main Reports (`reports/`)
 
@@ -164,7 +164,7 @@ reference_db/
 | `03_primers_removed/` | Primer-free amplicons |
 | `04_asvs/` | Final ASV sequences and abundance table |
 
-## 🔬 Pipeline Details
+## Pipeline Details
 
 ### Step 1: Quality Filtering (Trimmomatic)
 - Removes low-quality bases from read ends
@@ -209,7 +209,7 @@ reference_db/
 - Uses reference classification database
 - Separates results into distinct files
 
-## 📈 Filtering Explained
+## Filtering Explained
 
 ### Identity and Alignment Filters (`--min-identity`, `--min-alignment`)
 
@@ -238,7 +238,7 @@ Removes low-abundance detections that may be:
 
 **Comparison files**: Both filtered (`species_by_sample.csv`) and unfiltered (`species_by_sample_ALL.csv`) versions are generated for comparison.
 
-## 💡 Examples
+## Examples
 
 ### Example 1: Standard Fish eDNA Analysis
 
@@ -295,7 +295,7 @@ Removes low-abundance detections that may be:
     --no-blast
 ```
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -329,7 +329,7 @@ All processing logs are saved in `OUTPUT_DIR/logs/`:
 - `dada2.log` - ASV generation (if using DADA2)
 - `reports.log` - Report generation details
 
-## 📚 Citation
+## Citation
 
 If you use this pipeline, please cite:
 
@@ -344,11 +344,11 @@ And the underlying tools:
 - BLAST: Altschul et al. (1990) Journal of Molecular Biology
 ```
 
-## 📄 License
+## License
 
 MIT License - see LICENSE file for details
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 Built with:
 - [DADA2](https://benjjneb.github.io/dada2/)
